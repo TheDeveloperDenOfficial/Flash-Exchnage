@@ -6,8 +6,7 @@
     "dev": "npx prisma generate && next dev",
     "build": "npx prisma generate && next build",
     "start": "next start",
-    "lint": "next lint",
-    "postinstall": "prisma generate"
+    "lint": "next lint"
   },
   "dependencies": {
     "next": "14.0.0",
@@ -25,4 +24,3 @@
     "@types/react-dom": "^18.0.0"
   }
 }
-
