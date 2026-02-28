@@ -3,10 +3,10 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Prisma needs OpenSSL on Alpine
-RUN apk add --no-cache openssl
+# Install dependencies needed for Prisma
+RUN apk add --no-cache openssl bash
 
-# Copy package files for caching
+# Copy package files first (for caching)
 COPY package*.json ./
 
 # Install dependencies
@@ -21,7 +21,7 @@ RUN npx prisma generate
 # Copy rest of app
 COPY . .
 
-# Build Next.js app
+# Build Next.js app (standalone)
 RUN npm run build
 
 
@@ -33,6 +33,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
 
+# Install runtime dependencies
 RUN apk add --no-cache openssl bash
 
 # Copy Next.js standalone output
@@ -45,10 +46,11 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
+# Expose the port
 EXPOSE 3000
 
 # ---------- Start script ----------
-# Create a small startup script to run migrations then start the server
+# Create start.sh inside the container to run migrations then server
 COPY <<'EOF' /start.sh
 #!/bin/bash
 set -e
@@ -60,6 +62,8 @@ echo "Starting Next.js server..."
 node server.js
 EOF
 
+# Make start.sh executable
 RUN chmod +x /start.sh
 
+# Run the start script
 CMD ["/start.sh"]
