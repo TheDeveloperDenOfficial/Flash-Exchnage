@@ -1,28 +1,33 @@
 // app/page.tsx
 
+import OrderTracker from '@/components/OrderTracker';
+
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-      <h1 className="text-3xl font-bold mb-4">Flash Exchange</h1>
-      <p className="text-lg text-gray-600 mb-8">
-        Instantly buy and sell cryptocurrencies
-      </p>
-      <div className="space-y-4 w-full max-w-md">
-        {/* Placeholder for Token Selector */}
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold">Select Token</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Coming soon: Choose your token and network
+    <div className="container mx-auto px-4 py-8">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold text-gray-800 mb-4">Flash Exchange</h1>
+        <p className="text-xl text-gray-600">
+          Instantly buy and sell cryptocurrencies
+        </p>
+      </div>
+
+      <div className="max-w-2xl mx-auto space-y-6">
+        {/* Token Selection Form - You'll add this later */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-2xl font-semibold mb-4">Get Started</h2>
+          <p className="text-gray-600 mb-6">
+            Select your token and network to begin exchanging cryptocurrencies.
           </p>
+          <div className="text-center py-8">
+            <p className="text-gray-500 italic">
+              Token selection interface coming soon...
+            </p>
+          </div>
         </div>
 
-        {/* Placeholder for Order Tracker */}
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold">Track Order</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Enter your order ID to check status
-          </p>
-        </div>
+        {/* Order Tracker */}
+        <OrderTracker />
       </div>
     </div>
   );
