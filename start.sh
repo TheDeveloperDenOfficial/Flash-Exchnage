@@ -5,7 +5,7 @@ echo "=============================="
 echo "🚀 Starting Flash-Exchange..."
 echo "=============================="
 
-# Optional: wait for database to be ready
+# Wait for DB to be ready
 echo "⏳ Waiting for DB..."
 until nc -z ${DB_HOST:-localhost} ${DB_PORT:-5432}; do
   sleep 1
@@ -15,6 +15,6 @@ done
 echo "🛠 Running Prisma migrations..."
 npx prisma migrate deploy
 
-# Start Next.js
+# Start Next.js server on all interfaces
 echo "🌐 Starting Next.js server..."
-exec node server.js
+exec node server.js -p 3000 -H 0.0.0.0
