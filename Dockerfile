@@ -3,27 +3,26 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies needed for Prisma
+# Install dependencies needed by Prisma
 RUN apk add --no-cache openssl bash
 
-# Copy package files first (for caching)
+# Copy package files first for caching
 COPY package*.json ./
 
 # Install dependencies
 RUN npm install
 
-# Copy Prisma schema first (needed for generate)
+# Copy Prisma schema first to generate client
 COPY prisma ./prisma
 
 # Generate Prisma client
 RUN npx prisma generate
 
-# Copy rest of app
+# Copy the rest of the app
 COPY . .
 
-# Build Next.js app (standalone)
+# Build Next.js app in standalone mode
 RUN npm run build
-
 
 # ---------- Runner ----------
 FROM node:18-alpine AS runner
@@ -41,29 +40,17 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy Prisma runtime files
+# Copy Prisma client & schema
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
+# Copy the start script
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
 # Expose the port
 EXPOSE 3000
 
-# ---------- Start script ----------
-# Create start.sh inside the container to run migrations then server
-COPY <<'EOF' /start.sh
-#!/bin/bash
-set -e
-
-echo "Running database migrations..."
-npx prisma migrate deploy
-
-echo "Starting Next.js server..."
-node server.js
-EOF
-
-# Make start.sh executable
-RUN chmod +x /start.sh
-
-# Run the start script
+# Start the app via start.sh
 CMD ["/start.sh"]
