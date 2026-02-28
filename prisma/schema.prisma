@@ -1,0 +1,31 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TokenPrice {
+  id        Int      @id @default(autoincrement())
+  symbol    String
+  network   String
+  priceUsd  Float
+  updatedAt DateTime @updatedAt
+}
+
+model Order {
+  id           String   @id
+  userAddress  String
+  chain        String
+  payToken     String
+  amountRequested Float
+  amountPaid   Float?
+  txHash       String?
+  status       String   @default("pending") // pending, paid, expired
+  createdAt    DateTime @default(now())
+  paidAt       DateTime?
+}
