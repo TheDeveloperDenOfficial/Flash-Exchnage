@@ -1,5 +1,3 @@
-# docker-compose.yml
-
 version: '3.8'
 
 services:
@@ -8,11 +6,20 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/flash_exchange
-      - STATIC_USDT_TRC20=TMyStaticWallet123...
-      - ADMIN_SECRET=mysecretpassword
+      DATABASE_URL: postgresql://postgres:password@db:5432/flash_exchange
+      STATIC_USDT_TRC20: TMyStaticWallet123...
+      ADMIN_SECRET: mysecretpassword
+      DB_HOST: db
+      DB_PORT: 5432
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
 
   db:
     image: postgres:15
@@ -23,6 +30,11 @@ services:
       POSTGRES_DB: flash_exchange
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:
