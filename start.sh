@@ -5,10 +5,16 @@ echo "=============================="
 echo "🚀 Starting Flash-Exchange..."
 echo "=============================="
 
-# Run Prisma migrations (creates tables if they don't exist)
+# Optional: wait for database to be ready
+echo "⏳ Waiting for DB..."
+until nc -z ${DB_HOST:-localhost} ${DB_PORT:-5432}; do
+  sleep 1
+done
+
+# Run Prisma migrations
 echo "🛠 Running Prisma migrations..."
 npx prisma migrate deploy
 
-# Start the Next.js standalone server
+# Start Next.js
 echo "🌐 Starting Next.js server..."
-node server.js
+exec node server.js
