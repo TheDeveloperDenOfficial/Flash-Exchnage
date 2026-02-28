@@ -4,7 +4,7 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Install dependencies needed by Prisma and build
-RUN apk add --no-cache bash openssl curl netcat-openbsd
+RUN apk add --no-cache openssl bash
 
 # Copy package files first for caching
 COPY package*.json ./
@@ -32,8 +32,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
 
-# Install runtime dependencies
-RUN apk add --no-cache bash openssl curl netcat-openbsd
+# Install runtime dependencies including curl for healthcheck
+RUN apk add --no-cache openssl bash curl netcat-openbsd
 
 # Copy Next.js standalone output
 COPY --from=builder /app/.next/standalone ./
@@ -52,5 +52,5 @@ RUN chmod +x /start.sh
 # Expose the port
 EXPOSE 3000
 
-# Use the start script
+# Start the app via start.sh
 CMD ["/start.sh"]
