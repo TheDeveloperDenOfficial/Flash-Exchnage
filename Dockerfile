@@ -32,8 +32,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV DATABASE_URL=${DATABASE_URL}
 
-# Install runtime dependencies
-RUN apk add --no-cache openssl bash
+# Install runtime dependencies including curl for healthcheck
+RUN apk add --no-cache openssl bash curl
 
 # Copy Next.js standalone output
 COPY --from=builder /app/.next/standalone ./
