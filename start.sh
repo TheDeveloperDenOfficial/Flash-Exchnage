@@ -5,11 +5,18 @@ echo "=============================="
 echo "🚀 Starting Flash-Exchange..."
 echo "=============================="
 
-# Wait for DB to be ready
+# Wait for DB to be ready (with a timeout so we don't hang forever)
 echo "⏳ Waiting for DB..."
+MAX_RETRIES=30
+RETRIES=0
 until nc -z ${DB_HOST:-db} ${DB_PORT:-5432}; do
-  echo "⏳ Database not ready yet..."
-  sleep 1
+  RETRIES=$((RETRIES+1))
+  if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
+    echo "❌ Database not reachable after $MAX_RETRIES attempts. Exiting."
+    exit 1
+  fi
+  echo "⏳ Database not ready yet (attempt $RETRIES/$MAX_RETRIES)..."
+  sleep 2
 done
 
 echo "✅ Database is ready!"
@@ -18,6 +25,9 @@ echo "✅ Database is ready!"
 echo "🛠 Running Prisma migrations..."
 npx prisma migrate deploy
 
-# Start Next.js server on all interfaces (0.0.0.0) so Coolify healthchecks can access it
+# Start Next.js standalone server on all interfaces
+# NOTE: Next.js standalone server.js uses PORT and HOSTNAME env vars, NOT CLI flags
 echo "🌐 Starting Next.js server..."
-exec node server.js --port 3000 --hostname 0.0.0.0
+export PORT=3000
+export HOSTNAME=0.0.0.0
+exec node server.js
