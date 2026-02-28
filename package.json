@@ -5,9 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "npx prisma migrate deploy && next start",
-    "lint": "next lint",
-    "postinstall": "prisma generate"
+    "start": "next start",
+    "lint": "next lint"
   },
   "dependencies": {
     "next": "14.0.0",

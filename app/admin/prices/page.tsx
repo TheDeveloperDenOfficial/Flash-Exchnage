@@ -1,9 +1,10 @@
-// app/admin/prices/page.tsx
+// app/admin/prices/page.tsx (updated)
 
 'use client';
 
 import { useEffect, useState } from 'react';
-import { db } from '@/lib/db';
+import PriceEditor from '@/components/Admin/PriceEditor';
+import WalletAddressManager from '@/components/Admin/WalletAddressManager';
 
 interface TokenPrice {
   id: number;
@@ -14,8 +15,7 @@ interface TokenPrice {
 
 export default function ManagePrices() {
   const [prices, setPrices] = useState<TokenPrice[]>([]);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editValue, setEditValue] = useState<number>(0);
+  const [activeTab, setActiveTab] = useState<'prices' | 'wallets'>('prices');
 
   useEffect(() => {
     fetchPrices();
@@ -27,78 +27,49 @@ export default function ManagePrices() {
     setPrices(data);
   };
 
-  const handleSave = async (id: number, newPrice: number) => {
+  const handlePriceUpdate = async (id: number, newPrice: number) => {
     await fetch(`/api/crypto?id=${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ priceUsd: newPrice }),
     });
-    setEditingId(null);
     fetchPrices();
   };
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">Manage Token Prices</h1>
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Token
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Network
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Price (USD)
-            </th>
-            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
-          {prices.map((price) => (
-            <tr key={price.id}>
-              <td className="px-6 py-4 whitespace-nowrap">{price.symbol}</td>
-              <td className="px-6 py-4 whitespace-nowrap">{price.network}</td>
-              <td className="px-6 py-4 whitespace-nowrap">
-                {editingId === price.id ? (
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editValue}
-                    onChange={(e) => setEditValue(parseFloat(e.target.value))}
-                    className="border rounded px-2 py-1 w-24"
-                  />
-                ) : (
-                  `$${price.priceUsd}`
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                {editingId === price.id ? (
-                  <button
-                    onClick={() => handleSave(price.id, editValue)}
-                    className="text-green-600 hover:text-green-900 mr-2"
-                  >
-                    Save
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setEditingId(price.id);
-                      setEditValue(price.priceUsd);
-                    }}
-                    className="text-indigo-600 hover:text-indigo-900"
-                  >
-                    Edit
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h1 className="text-2xl font-bold mb-4">Manage Settings</h1>
+      
+      <div className="border-b border-gray-200 mb-6">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('prices')}
+            className={`${
+              activeTab === 'prices'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            } whitespace-nowrap pb-4 px-1 border-b-2 font-medium`}
+          >
+            Token Prices
+          </button>
+          <button
+            onClick={() => setActiveTab('wallets')}
+            className={`${
+              activeTab === 'wallets'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            } whitespace-nowrap pb-4 px-1 border-b-2 font-medium`}
+          >
+            Wallet Addresses
+          </button>
+        </nav>
+      </div>
+
+      {activeTab === 'prices' ? (
+        <PriceEditor prices={prices} onUpdate={handlePriceUpdate} />
+      ) : (
+        <WalletAddressManager />
+      )}
     </div>
   );
 }
