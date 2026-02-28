@@ -3,6 +3,49 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
+# Prisma needs OpenSSL on Alpine
+RUN apk add --no-cache openssl
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy full project
+COPY . .
+
+# Generate Prisma client (now schema exists)
+RUN npx prisma generate
+
+# Build Next.js (must use standalone output)
+RUN npm run build
+
+
+# ---------- Runner ----------
+FROM node:18-alpine AS runner
+
+WORKDIR /app
+
+RUN apk add --no-cache openssl
+
+# Copy Next.js standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Copy Prisma runtime files
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/prisma ./prisma
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]# ---------- Builder ----------
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
 # Prisma requires OpenSSL on Alpine
 RUN apk add --no-cache openssl
 
@@ -45,3 +88,4 @@ COPY --from=builder /app/prisma ./prisma
 EXPOSE 3000
 
 CMD ["node", "server.js"]
+
