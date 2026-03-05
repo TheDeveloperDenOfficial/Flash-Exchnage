@@ -179,6 +179,31 @@
     var list = document.createElement('div');
     list.style.cssText = 'display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #d0d0e8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:9999;max-height:260px;overflow-y:auto;';
 
+    // On mobile the form lives inside .nk-banner which has overflow:hidden,
+    // clipping absolute-positioned children. We reposition to fixed on open.
+    function repositionList() {
+      var rect = trigger.getBoundingClientRect();
+      var viewH = window.innerHeight;
+      var spaceBelow = viewH - rect.bottom;
+      var spaceAbove = rect.top;
+      var maxH = Math.min(260, Math.max(spaceBelow, spaceAbove) - 12);
+
+      list.style.position = 'fixed';
+      list.style.width    = rect.width + 'px';
+      list.style.left     = rect.left + 'px';
+      list.style.right    = 'auto';
+      list.style.maxHeight = maxH + 'px';
+
+      // Open downward if enough space, else upward
+      if (spaceBelow >= 160 || spaceBelow >= spaceAbove) {
+        list.style.top    = (rect.bottom + 4) + 'px';
+        list.style.bottom = 'auto';
+      } else {
+        list.style.bottom = (viewH - rect.top + 4) + 'px';
+        list.style.top    = 'auto';
+      }
+    }
+
     methods.forEach(function (m, idx) {
       var opt = document.createElement('div');
       opt.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:' + (idx === 0 ? '#ededfc' : '#fff') + ';transition:background .15s;';
@@ -215,8 +240,12 @@
 
     csel._open = false;
 
+    // Move list to document.body so it is never clipped by parent overflow:hidden
+    document.body.appendChild(list);
+
     function openDropdown() {
       csel._open = true;
+      repositionList();
       list.style.display = 'block';
       trigArrow.style.transform = 'translateY(-50%) rotate(180deg)';
       trigger.style.borderColor = '#38385f';
@@ -227,6 +256,9 @@
       trigArrow.style.transform = 'translateY(-50%) rotate(0deg)';
       trigger.style.borderColor = '#d9d9d9';
     }
+    // Keep list aligned during scroll / orientation change
+    window.addEventListener('scroll', function(){ if(csel._open) repositionList(); }, true);
+    window.addEventListener('resize', function(){ if(csel._open) repositionList(); });
 
     // ── Toggle open/close ─────────────────────────────────────
     trigger.addEventListener('click', function (e) {
