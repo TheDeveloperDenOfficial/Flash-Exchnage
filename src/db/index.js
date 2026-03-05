@@ -1,107 +1,108 @@
 'use strict';
-const { Pool } = require('pg');
-const fs   = require('fs');
-const path = require('path');
-const config = require('../config');
+const { Telegraf, Scenes, session } = require('telegraf');
+const config   = require('../config');
+const adminOnly = require('./middleware/auth');
+const { MAIN_MENU_BUTTONS, WELCOME_TEXT } = require('./middleware/menu');
 
-// ── Pool ─────────────────────────────────────────────────────
-// Coolify's internal PostgreSQL uses a self-signed certificate.
-// The connection is internal (container-to-container on a private Docker
-// network), so skipping cert verification is appropriate here.
-//
-// IMPORTANT: newer versions of pg (≥8.x) treat `sslmode=require` in the
-// connection string as `verify-full`, which overrides the `ssl` object and
-// causes "unable to verify the first certificate". We must strip any `sslmode`
-// query parameter from the DATABASE_URL before passing it to the Pool so that
-// the explicit `ssl` object below is the sole authority on SSL behaviour.
-const sslConfig = { rejectUnauthorized: false };
+// Handlers
+const { handleStats }    = require('./handlers/stats');
+const { handleOrders, handleOrderDetail, handleOrderRetry } = require('./handlers/orders');
+const { handleWallets, handleWalletToggle, handleWalletQR, handleWalletDelete, handleWalletConfirmDelete } = require('./handlers/wallets');
+const { handleSettings } = require('./handlers/settings');
+const { handleAdmins, handleAdminRemove } = require('./handlers/admins');
+const { handleUnmatched, handleUnmatchedDetail, handleMarkResolved, handleMarkRefunded } = require('./handlers/unmatched');
 
-/**
- * Strip `sslmode` (and the legacy `uselibpqcompat`) query params from a
- * postgres connection string so that pg's `ssl` pool option takes full effect.
- */
-function sanitiseDatabaseUrl(url) {
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.delete('sslmode');
-    parsed.searchParams.delete('uselibpqcompat');
-    return parsed.toString();
-  } catch {
-    // Not a valid URL (e.g. already a plain DSN) — return as-is.
-    return url;
+// Scenes
+const addWalletScene     = require('./scenes/addWallet');
+const { changePriceScene, changeMinQtyScene, changeExpiryScene } = require('./scenes/settingsScenes');
+const { addAdminScene, linkTransactionScene } = require('./scenes/adminScenes');
+
+// ── Home menu helper ─────────────────────────────────────────
+async function showHome(ctx) {
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS })
+      .catch(() => ctx.reply(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS }));
+  } else {
+    await ctx.reply(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS });
   }
 }
 
-const poolConfig = config.databaseUrl
-  ? {
-      connectionString: sanitiseDatabaseUrl(config.databaseUrl),
-      ssl: sslConfig,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    }
-  : { ...config.db, ssl: sslConfig };
-
-const pool = new Pool(poolConfig);
-
-pool.on('error', (err) => {
-  console.error('[DB] Unexpected pool error:', err.message);
-});
-
-// ── Migration ─────────────────────────────────────────────────
-async function migrate() {
-  const sql    = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(sql);
-    await client.query('COMMIT');
-    console.log('[DB] Migration complete');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+function createBot() {
+  if (!config.telegramBotToken) {
+    console.warn('[bot] TELEGRAM_BOT_TOKEN not set — bot disabled');
+    return null;
   }
+
+  const bot   = new Telegraf(config.telegramBotToken);
+  const stage = new Scenes.Stage([
+    addWalletScene,
+    changePriceScene,
+    changeMinQtyScene,
+    changeExpiryScene,
+    addAdminScene,
+    linkTransactionScene,
+  ]);
+
+  // ── Middleware ──────────────────────────────────────────────
+  bot.use(session());
+  bot.use(stage.middleware());
+  bot.use(adminOnly);
+
+  // ── /start ──────────────────────────────────────────────────
+  bot.start(ctx => showHome(ctx));
+
+  // ── Navigation — inline button routing ─────────────────────
+  bot.action('nav_home',      ctx => { ctx.answerCbQuery(); return showHome(ctx); });
+  bot.action('nav_stats',     ctx => { ctx.answerCbQuery(); return handleStats(ctx); });
+  bot.action('nav_orders',    ctx => { ctx.answerCbQuery(); return handleOrders(ctx, 0); });
+  bot.action('nav_wallets',   ctx => { ctx.answerCbQuery(); return handleWallets(ctx); });
+  bot.action('nav_settings',  ctx => { ctx.answerCbQuery(); return handleSettings(ctx); });
+  bot.action('nav_admins',    ctx => { ctx.answerCbQuery(); return handleAdmins(ctx); });
+  bot.action('nav_unmatched', ctx => { ctx.answerCbQuery(); return handleUnmatched(ctx); });
+
+  // ── Orders ──────────────────────────────────────────────────
+  bot.action(/^orders_page_(\d+)$/,  ctx => { ctx.answerCbQuery(); return handleOrders(ctx, parseInt(ctx.match[1], 10)); });
+  bot.action(/^order_detail_(.+)$/,  ctx => { ctx.answerCbQuery(); return handleOrderDetail(ctx, ctx.match[1]); });
+  bot.action(/^order_retry_(.+)$/,   ctx => handleOrderRetry(ctx, ctx.match[1]));
+
+  // ── Wallets ─────────────────────────────────────────────────
+  bot.action('wallet_add',                    ctx => { ctx.answerCbQuery(); ctx.scene.enter('add_wallet'); });
+  bot.action(/^wallet_toggle_(\d+)$/,         ctx => handleWalletToggle(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^wallet_qr_(\d+)$/,             ctx => handleWalletQR(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^wallet_delete_(\d+)$/,         ctx => handleWalletDelete(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^wallet_confirm_delete_(\d+)$/, ctx => handleWalletConfirmDelete(ctx, parseInt(ctx.match[1], 10)));
+
+  // ── Settings ────────────────────────────────────────────────
+  bot.action('settings_price',   ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_price'); });
+  bot.action('settings_min_qty', ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_min_qty'); });
+  bot.action('settings_expiry',  ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_expiry'); });
+
+  // ── Admins ──────────────────────────────────────────────────
+  bot.action('admin_add',              ctx => { ctx.answerCbQuery(); ctx.scene.enter('add_admin'); });
+  bot.action(/^admin_remove_(\d+)$/,   ctx => handleAdminRemove(ctx, ctx.match[1]));
+
+  // ── Unmatched ────────────────────────────────────────────────
+  bot.action(/^unmatched_detail_(\d+)$/,  ctx => handleUnmatchedDetail(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^unmatched_resolve_(\d+)$/, ctx => handleMarkResolved(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^unmatched_refund_(\d+)$/,  ctx => handleMarkRefunded(ctx, parseInt(ctx.match[1], 10)));
+  bot.action(/^unmatched_link_(\d+)$/,    ctx => {
+    ctx.answerCbQuery();
+    ctx.scene.session = { txId: parseInt(ctx.match[1], 10) };
+    ctx.scene.enter('link_transaction');
+  });
+
+  // ── BotFather commands ───────────────────────────────────────
+  bot.telegram.setMyCommands([
+    { command: 'start', description: '🏠 Open main menu' },
+  ]).catch(() => {});
+
+  // ── Error handler ────────────────────────────────────────────
+  bot.catch((err, ctx) => {
+    console.error('[bot] Error for', ctx.updateType, err.message);
+    ctx.reply('An error occurred. Please try again.').catch(() => {});
+  });
+
+  return bot;
 }
 
-// ── Bootstrap Admin ───────────────────────────────────────────
-// Ensures the bootstrap admin from env exists in DB on every startup.
-async function ensureBootstrapAdmin() {
-  if (!config.bootstrapAdminId) return;
-  await pool.query(
-    `INSERT INTO admins (telegram_id, first_name, is_bootstrap, is_active, added_by)
-     VALUES ($1, 'Bootstrap Admin', true, true, $1)
-     ON CONFLICT (telegram_id) DO UPDATE SET is_active = true`,
-    [config.bootstrapAdminId]
-  );
-}
-
-// ── Settings Helpers ──────────────────────────────────────────
-async function getSetting(key) {
-  const { rows } = await pool.query('SELECT value FROM settings WHERE key=$1', [key]);
-  return rows.length ? rows[0].value : null;
-}
-
-async function setSetting(key, value, adminTelegramId = null) {
-  await pool.query(
-    `INSERT INTO settings (key, value, updated_at, updated_by)
-     VALUES ($1, $2, NOW(), $3)
-     ON CONFLICT (key) DO UPDATE
-     SET value=$2, updated_at=NOW(), updated_by=$3`,
-    [key, String(value), adminTelegramId]
-  );
-}
-
-async function getAllSettings() {
-  const { rows } = await pool.query('SELECT key, value FROM settings');
-  return Object.fromEntries(rows.map(r => [r.key, r.value]));
-}
-
-// ── Health ────────────────────────────────────────────────────
-async function ping() {
-  const { rows } = await pool.query('SELECT 1 AS ok');
-  return rows[0].ok === '1' || rows[0].ok === 1;
-}
-
-module.exports = { pool, migrate, ensureBootstrapAdmin, getSetting, setSetting, getAllSettings, ping };
+module.exports = { createBot };
