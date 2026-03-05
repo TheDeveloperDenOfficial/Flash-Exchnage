@@ -47,14 +47,17 @@ app.use('/api',        apiLimit, publicRoutes);
 app.use('/api/order',  apiLimit, orderLimit, orderRoutes);
 
 // ── Health ────────────────────────────────────────────────────
-app.get('/health', async (_req, res) => {
+// Both /health and /api/health supported — Coolify uses /api/health by default
+async function healthHandler(_req, res) {
   try {
     await pool.query('SELECT 1');
     res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
   } catch {
     res.status(503).json({ status: 'error' });
   }
-});
+}
+app.get('/health',     healthHandler);
+app.get('/api/health', healthHandler);
 
 // ── Static Frontend ───────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public'), {
