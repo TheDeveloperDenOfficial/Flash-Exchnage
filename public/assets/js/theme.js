@@ -77,6 +77,56 @@
     buildCustomDropdown(select, methods);
   }
 
+  // ── Network badge icon CDN mapping ────────────────────────────
+  var ICON_CDN = 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color';
+  var NETWORK_BADGE = { bsc: 'bnb', eth: 'eth', tron: 'trx' };
+
+  /**
+   * Returns a div containing a composite icon:
+   *   - Main coin logo (full size)
+   *   - Small network badge in bottom-right corner (only when coin appears
+   *     on multiple networks, e.g. USDT BEP-20 / ERC-20 / TRC-20)
+   * size = pixel size of the main icon
+   */
+  function makeCompositeIcon(m, size) {
+    size = size || 26;
+    var badgeSize = Math.round(size * 0.5);
+
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;width:' + size + 'px;height:' + size + 'px;flex-shrink:0;display:inline-block;';
+
+    // Main coin image
+    var mainImg = document.createElement('img');
+    mainImg.src = (m.iconUrl) || (ICON_CDN + '/' + (m.coinSymbol || '').toLowerCase() + '.svg');
+    mainImg.alt = m.coinSymbol || '';
+    mainImg.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;display:block;';
+    mainImg.onerror = function () {
+      wrap.innerHTML = '';
+      var fb = document.createElement('span');
+      fb.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#38385f;color:#fff;font-size:' + Math.round(size * 0.4) + 'px;font-weight:700;display:flex;align-items:center;justify-content:center;';
+      fb.textContent = (m.coinSymbol || '?').slice(0, 2).toUpperCase();
+      wrap.appendChild(fb);
+    };
+    wrap.appendChild(mainImg);
+
+    // Badge: show network icon when a network badge key exists AND coin is not the native coin of that network
+    // e.g. USDT on BSC → show BNB badge; BNB on BSC → no badge (it IS BNB)
+    var badgeKey  = NETWORK_BADGE[(m.network || '').toLowerCase()];
+    var coinLower = (m.coinSymbol || '').toLowerCase();
+    var showBadge = badgeKey && coinLower !== badgeKey;
+
+    if (showBadge) {
+      var badge = document.createElement('img');
+      badge.src = ICON_CDN + '/' + badgeKey + '.svg';
+      badge.alt = badgeKey;
+      badge.style.cssText = 'position:absolute;bottom:-2px;right:-2px;width:' + badgeSize + 'px;height:' + badgeSize + 'px;border-radius:50%;object-fit:cover;border:1px solid #fff;background:#fff;display:block;';
+      badge.onerror = function () { this.style.display = 'none'; };
+      wrap.appendChild(badge);
+    }
+
+    return wrap;
+  }
+
   function buildCustomDropdown(nativeSelect, methods) {
     // Hide native select and overlay icon (we replace both)
     nativeSelect.style.display = 'none';
@@ -108,9 +158,9 @@
     trigger.onmouseenter = function(){ this.style.borderColor='#38385f'; };
     trigger.onmouseleave = function(){ this.style.borderColor= csel._open ? '#38385f' : '#d9d9d9'; };
 
-    var trigImg = document.createElement('img');
-    trigImg.style.cssText = 'width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;display:none;';
-    trigImg.alt = '';
+    // trigImg is now a container div swapped out on selection
+    var trigImg = document.createElement('div');
+    trigImg.style.cssText = 'display:none;flex-shrink:0;';
 
     var trigLabel = document.createElement('span');
     trigLabel.style.cssText = 'flex:1;font-size:14px;color:#333;line-height:1.4;';
@@ -132,26 +182,13 @@
     methods.forEach(function (m, idx) {
       var opt = document.createElement('div');
       opt.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:' + (idx === 0 ? '#ededfc' : '#fff') + ';transition:background .15s;';
-      opt.dataset.value  = m.code;
-      opt.dataset.icon   = m.iconUrl || '';
-      opt.dataset.symbol = m.coinSymbol || '';
+      opt.dataset.value   = m.code;
+      opt.dataset.icon    = m.iconUrl || '';
+      opt.dataset.symbol  = m.coinSymbol || '';
+      opt.dataset.network = m.network || '';
 
-      var optImg = document.createElement('img');
-      optImg.style.cssText = 'width:26px;height:26px;min-width:26px;border-radius:50%;object-fit:cover;flex-shrink:0;display:inline-block;';
-      optImg.src = m.iconUrl || '';
-      optImg.alt = m.coinSymbol || '';
-      optImg.onerror = function() {
-        // Fallback: coloured circle with coin initial
-        this.style.display = 'none';
-        if (!this.nextSibling || !this.nextSibling._isFallback) {
-          var fb = document.createElement('span');
-          fb._isFallback = true;
-          fb.style.cssText = 'width:26px;height:26px;min-width:26px;border-radius:50%;background:#38385f;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;';
-          fb.textContent = (m.coinSymbol || '?').slice(0,2).toUpperCase();
-          opt.insertBefore(fb, this.nextSibling);
-        }
-      };
-
+      // Composite icon wrapper
+      var iconWrap = makeCompositeIcon(m, 26);
       var optName = document.createElement('span');
       optName.style.cssText = 'font-size:14px;color:#333;font-weight:500;flex:1;';
       optName.textContent = m.name;
@@ -160,7 +197,7 @@
       optSym.style.cssText = 'font-size:11px;color:#888;';
       optSym.textContent = m.coinSymbol || '';
 
-      opt.appendChild(optImg);
+      opt.appendChild(iconWrap);
       opt.appendChild(optName);
       opt.appendChild(optSym);
 
@@ -210,6 +247,7 @@
         code:       opt.dataset.value,
         iconUrl:    opt.dataset.icon,
         coinSymbol: opt.dataset.symbol,
+        network:    opt.dataset.network,
         name:       optName ? optName.textContent : opt.dataset.value,
       }, nativeSelect, trigImg, trigLabel);
       closeDropdown();
@@ -223,13 +261,11 @@
   function selectOption(m, nativeSelect, trigImg, trigLabel) {
     if (!m) return;
     nativeSelect.value = m.code;
-    if (m.iconUrl) {
-      trigImg.src           = m.iconUrl;
-      trigImg.style.display = 'inline-block';
-      trigImg.onerror       = function () { trigImg.style.display = 'none'; };
-    } else {
-      trigImg.style.display = 'none';
-    }
+    // Rebuild composite icon in the trigger
+    trigImg.innerHTML = '';
+    var ic = makeCompositeIcon(m, 24);
+    trigImg.appendChild(ic);
+    trigImg.style.display = 'inline-flex';
     trigLabel.textContent = m.name || m.code;
   }
 
