@@ -1,5 +1,5 @@
 /**
- * Flash Exchange — Frontend Logic v2.0
+ * Flash Exchange — Frontend Logic v3.0
  * Handles: config load, dynamic form, buy flow, modal, localStorage recovery, wallet lookup
  */
 (function () {
@@ -13,6 +13,12 @@
   var countdown  = null;
   var dismissed  = false;
 
+  // CDN base for coin SVG icons
+  var ICON_CDN = 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color';
+
+  // Maps network key → native coin symbol (used to decide when to show badge)
+  var NETWORK_NATIVE = { bsc: 'bnb', eth: 'eth', tron: 'trx' };
+
   // ── Bootstrap ──────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
     loadConfig();
@@ -21,301 +27,331 @@
     bindBanner();
   });
 
-  // ── Load config from API on page load ─────────────────────
+  // ── Config ─────────────────────────────────────────────────
   async function loadConfig() {
     try {
       var res  = await fetch(API + '/config');
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Config load failed');
-
       appConfig = data;
-      applyConfig();
-      checkLocalStorageOrder();
     } catch (err) {
       console.warn('[FE] Config load failed, using defaults:', err.message);
-      applyConfig();
-      checkLocalStorageOrder();
     }
+    applyConfig();
+    checkLocalStorageOrder();
   }
 
   function applyConfig() {
-    // Token symbol and price
     document.querySelectorAll('.fe-sym').forEach(function (el) { el.textContent = appConfig.tokenSymbol; });
     var priceEl = document.getElementById('fe-token-price');
     if (priceEl) priceEl.textContent = '$' + appConfig.tokenPriceUsd + ' USDT';
     var symEl = document.getElementById('fe-token-symbol');
     if (symEl) symEl.textContent = appConfig.tokenSymbol;
-
-    // Min qty label
     var minLabel = document.getElementById('fe-min-qty-label');
     if (minLabel) minLabel.textContent = '(min ' + appConfig.minOrderQty + ')';
-
-    // Quantity input min
     var qtyInput = document.getElementById('icox_quantity');
     if (qtyInput) qtyInput.min = appConfig.minOrderQty;
-
-    // Payment methods dropdown
     buildPaymentMethodSelect();
   }
 
-  function buildPaymentMethodSelect() {
-    var select = document.getElementById('payment_method');
-    if (!select) return;
+  // ── Payment method dropdown ─────────────────────────────────
+  // Icons use CSS background-image on div elements — completely immune to
+  // any theme img rules (max-width, height:auto, display:none !important, etc.)
+  // List is appended to <body> with position:fixed — escapes overflow:hidden parents
 
-    var methods = appConfig.paymentMethods;
-
-    // Populate hidden native select (used for form value reads)
-    if (!methods || !methods.length) {
-      select.innerHTML = '<option value="">No payment methods available</option>';
-      buildCustomDropdown(select, []);
-      return;
-    }
-    select.innerHTML = methods.map(function (m) {
-      return '<option value="' + m.code + '" data-icon="' + m.iconUrl + '" data-symbol="' + m.coinSymbol + '">' + m.name + '</option>';
-    }).join('');
-
-    buildCustomDropdown(select, methods);
+  function makeCoinIconDiv(coinSymbol, size) {
+    var url = ICON_CDN + '/' + (coinSymbol || '').toLowerCase() + '.svg';
+    var d   = document.createElement('div');
+    d.style.cssText = [
+      'width:'              + size + 'px',
+      'height:'             + size + 'px',
+      'min-width:'          + size + 'px',
+      'border-radius:50%',
+      'background-image:url(' + url + ')',
+      'background-size:cover',
+      'background-position:center',
+      'background-repeat:no-repeat',
+      'background-color:#f0f0f0',
+      'flex-shrink:0',
+      'display:inline-block',
+    ].join(';');
+    return d;
   }
 
-  // ── Network badge icon CDN mapping ────────────────────────────
-  var ICON_CDN = 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color';
-  var NETWORK_BADGE = { bsc: 'bnb', eth: 'eth', tron: 'trx' };
-
-  /**
-   * Returns a div containing a composite icon:
-   *   - Main coin logo (full size)
-   *   - Small network badge in bottom-right corner (only when coin appears
-   *     on multiple networks, e.g. USDT BEP-20 / ERC-20 / TRC-20)
-   * size = pixel size of the main icon
-   */
-  function makeCompositeIcon(m, size) {
+  function makeCompositeIcon(method, size) {
     size = size || 26;
-    var badgeSize = Math.round(size * 0.5);
+    var coinSym    = (method.coinSymbol || '').toLowerCase();
+    var networkKey = (method.network   || '').toLowerCase();
+    var nativeCoin = NETWORK_NATIVE[networkKey];
+    var showBadge  = nativeCoin && coinSym !== nativeCoin;
+    var badgeSize  = Math.round(size * 0.48);
 
     var wrap = document.createElement('div');
-    wrap.style.cssText = 'position:relative;width:' + size + 'px;height:' + size + 'px;flex-shrink:0;display:inline-block;';
+    wrap.style.cssText = [
+      'position:relative',
+      'width:'     + size + 'px',
+      'height:'    + size + 'px',
+      'min-width:' + size + 'px',
+      'flex-shrink:0',
+      'display:inline-block',
+    ].join(';');
 
-    // Main coin image
-    var mainImg = document.createElement('img');
-    mainImg.src = (m.iconUrl) || (ICON_CDN + '/' + (m.coinSymbol || '').toLowerCase() + '.svg');
-    mainImg.alt = m.coinSymbol || '';
-    mainImg.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;display:block;';
-    mainImg.onerror = function () {
-      wrap.innerHTML = '';
-      var fb = document.createElement('span');
-      fb.style.cssText = 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#38385f;color:#fff;font-size:' + Math.round(size * 0.4) + 'px;font-weight:700;display:flex;align-items:center;justify-content:center;';
-      fb.textContent = (m.coinSymbol || '?').slice(0, 2).toUpperCase();
-      wrap.appendChild(fb);
-    };
-    wrap.appendChild(mainImg);
-
-    // Badge: show network icon when a network badge key exists AND coin is not the native coin of that network
-    // e.g. USDT on BSC → show BNB badge; BNB on BSC → no badge (it IS BNB)
-    var badgeKey  = NETWORK_BADGE[(m.network || '').toLowerCase()];
-    var coinLower = (m.coinSymbol || '').toLowerCase();
-    var showBadge = badgeKey && coinLower !== badgeKey;
+    wrap.appendChild(makeCoinIconDiv(method.coinSymbol, size));
 
     if (showBadge) {
-      var badge = document.createElement('img');
-      badge.src = ICON_CDN + '/' + badgeKey + '.svg';
-      badge.alt = badgeKey;
-      badge.style.cssText = 'position:absolute;bottom:-2px;right:-2px;width:' + badgeSize + 'px;height:' + badgeSize + 'px;border-radius:50%;object-fit:cover;border:1px solid #fff;background:#fff;display:block;';
-      badge.onerror = function () { this.style.display = 'none'; };
+      var badge = makeCoinIconDiv(nativeCoin, badgeSize);
+      badge.style.position   = 'absolute';
+      badge.style.bottom     = '-2px';
+      badge.style.right      = '-2px';
+      badge.style.border     = '1.5px solid #fff';
+      badge.style.boxSizing  = 'border-box';
+      badge.style.borderRadius = '50%';
       wrap.appendChild(badge);
     }
 
     return wrap;
   }
 
-  function buildCustomDropdown(nativeSelect, methods) {
-    // Hide native select and overlay icon (we replace both)
-    nativeSelect.style.display = 'none';
+  function buildPaymentMethodSelect() {
+    var nativeSel = document.getElementById('payment_method');
+    if (!nativeSel) return;
+
+    var methods = appConfig.paymentMethods || [];
+
+    // Keep native <select> hidden — used by handleBuyClick to read value
+    nativeSel.style.display = 'none';
     var oldIcon = document.getElementById('fe-coin-icon');
     if (oldIcon) oldIcon.style.display = 'none';
 
-    var wrap = nativeSelect.parentNode;
+    // Sync native select options
+    nativeSel.innerHTML = methods.length
+      ? methods.map(function (m) {
+          return '<option value="' + m.code + '">' + m.name + '</option>';
+        }).join('')
+      : '<option value="">No payment methods available</option>';
 
-    // Remove any previous custom dropdown
-    var prev = wrap.querySelector('.fe-csel');
-    if (prev) prev.parentNode.removeChild(prev);
+    // Remove any previous custom dropdown + orphaned list
+    var wrap    = nativeSel.parentNode;
+    var oldWrap = document.getElementById('fe-csel-wrap');
+    if (oldWrap) oldWrap.parentNode.removeChild(oldWrap);
+    var oldList = document.getElementById('fe-csel-list');
+    if (oldList) oldList.parentNode.removeChild(oldList);
 
     if (!methods.length) {
       var empty = document.createElement('div');
-      empty.className = 'fe-csel';
       empty.style.cssText = 'border:1px solid #d9d9d9;border-radius:6px;padding:10px 14px;color:#888;background:#fff;font-size:14px;';
-      empty.textContent = 'No payment methods available';
+      empty.textContent   = 'No payment methods available';
       wrap.appendChild(empty);
       return;
     }
 
-    // ── Build DOM (all inline styles — immune to theme CSS overrides) ──
-    var csel = document.createElement('div');
-    csel.style.cssText = 'position:relative;user-select:none;font-family:inherit;';
+    // ── Trigger button ────────────────────────────────────────
+    var trigWrap = document.createElement('div');
+    trigWrap.id  = 'fe-csel-wrap';
+    trigWrap.style.cssText = 'position:relative;';
 
-    // Trigger (shows selected item)
     var trigger = document.createElement('div');
-    trigger.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 36px 10px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;transition:border-color .2s;position:relative;';
-    trigger.onmouseenter = function(){ this.style.borderColor='#38385f'; };
-    trigger.onmouseleave = function(){ this.style.borderColor= csel._open ? '#38385f' : '#d9d9d9'; };
+    trigger.setAttribute('role', 'combobox');
+    trigger.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'padding:10px 36px 10px 12px',
+      'border:1px solid #d9d9d9',
+      'border-radius:6px',
+      'background:#fff',
+      'cursor:pointer',
+      'position:relative',
+      'min-height:44px',
+      'box-sizing:border-box',
+      'user-select:none',
+      'transition:border-color .2s',
+    ].join(';');
 
-    // trigImg is now a container div swapped out on selection
-    var trigImg = document.createElement('div');
-    trigImg.style.cssText = 'display:none;flex-shrink:0;';
+    var trigIcon = document.createElement('div');
+    trigIcon.style.cssText = 'display:none;flex-shrink:0;';
 
     var trigLabel = document.createElement('span');
-    trigLabel.style.cssText = 'flex:1;font-size:14px;color:#333;line-height:1.4;';
-    trigLabel.textContent = 'Select payment method';
+    trigLabel.style.cssText = 'flex:1;font-size:14px;color:#999;line-height:1.4;font-family:inherit;';
+    trigLabel.textContent   = 'Choose your payment currency';
 
     var trigArrow = document.createElement('span');
-    trigArrow.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%) rotate(0deg);transition:transform .2s;font-size:10px;color:#888;';
+    trigArrow.style.cssText = [
+      'position:absolute',
+      'right:12px',
+      'top:50%',
+      'transform:translateY(-50%) rotate(0deg)',
+      'font-size:10px',
+      'color:#aaa',
+      'pointer-events:none',
+      'transition:transform .2s',
+      'line-height:1',
+    ].join(';');
     trigArrow.textContent = '▼';
 
-    trigger.appendChild(trigImg);
+    trigger.appendChild(trigIcon);
     trigger.appendChild(trigLabel);
     trigger.appendChild(trigArrow);
-    csel.appendChild(trigger);
+    trigWrap.appendChild(trigger);
+    wrap.appendChild(trigWrap);
 
-    // Dropdown list
+    // ── Dropdown list — appended to body, position:fixed ──────
     var list = document.createElement('div');
-    list.style.cssText = 'display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #d0d0e8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:9999;max-height:260px;overflow-y:auto;';
+    list.id  = 'fe-csel-list';
+    list.style.cssText = [
+      'display:none',
+      'position:fixed',
+      'background:#fff',
+      'border:1px solid #d0d0e8',
+      'border-radius:10px',
+      'box-shadow:0 8px 32px rgba(56,56,95,.18)',
+      'z-index:99999',
+      'overflow-y:auto',
+      'overflow-x:hidden',
+      '-webkit-overflow-scrolling:touch',
+    ].join(';');
+    document.body.appendChild(list);
 
-    // On mobile the form lives inside .nk-banner which has overflow:hidden,
-    // clipping absolute-positioned children. We reposition to fixed on open.
-    function repositionList() {
-      var rect = trigger.getBoundingClientRect();
-      var viewH = window.innerHeight;
-      var spaceBelow = viewH - rect.bottom;
-      var spaceAbove = rect.top;
-      var maxH = Math.min(260, Math.max(spaceBelow, spaceAbove) - 12);
-
-      list.style.position = 'fixed';
-      list.style.width    = rect.width + 'px';
-      list.style.left     = rect.left + 'px';
-      list.style.right    = 'auto';
-      list.style.maxHeight = maxH + 'px';
-
-      // Open downward if enough space, else upward
-      if (spaceBelow >= 160 || spaceBelow >= spaceAbove) {
-        list.style.top    = (rect.bottom + 4) + 'px';
-        list.style.bottom = 'auto';
-      } else {
-        list.style.bottom = (viewH - rect.top + 4) + 'px';
-        list.style.top    = 'auto';
-      }
-    }
-
-    methods.forEach(function (m, idx) {
+    // Build option rows
+    methods.forEach(function (m) {
       var opt = document.createElement('div');
-      opt.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:' + (idx === 0 ? '#ededfc' : '#fff') + ';transition:background .15s;';
       opt.dataset.value   = m.code;
-      opt.dataset.icon    = m.iconUrl || '';
       opt.dataset.symbol  = m.coinSymbol || '';
-      opt.dataset.network = m.network || '';
+      opt.dataset.network = m.network    || '';
+      opt.dataset.name    = m.name       || '';
+      opt.style.cssText = [
+        'display:flex',
+        'align-items:center',
+        'gap:12px',
+        'padding:11px 16px',
+        'cursor:pointer',
+        'background:#fff',
+        'transition:background .12s',
+        'box-sizing:border-box',
+      ].join(';');
 
-      // Composite icon wrapper
-      var iconWrap = makeCompositeIcon(m, 26);
-      var optName = document.createElement('span');
-      optName.style.cssText = 'font-size:14px;color:#333;font-weight:500;flex:1;';
-      optName.textContent = m.name;
+      opt.appendChild(makeCompositeIcon(m, 28));
 
-      var optSym = document.createElement('span');
-      optSym.style.cssText = 'font-size:11px;color:#888;';
-      optSym.textContent = m.coinSymbol || '';
+      var nameSpan = document.createElement('span');
+      nameSpan.style.cssText    = 'font-size:14px;color:#222;font-weight:500;flex:1;font-family:inherit;pointer-events:none;';
+      nameSpan.textContent      = m.name;
+      opt.appendChild(nameSpan);
 
-      opt.appendChild(iconWrap);
-      opt.appendChild(optName);
-      opt.appendChild(optSym);
+      var symSpan = document.createElement('span');
+      symSpan.style.cssText  = 'font-size:11px;color:#999;font-family:inherit;pointer-events:none;';
+      symSpan.textContent    = m.coinSymbol || '';
+      opt.appendChild(symSpan);
 
-      opt.onmouseenter = function(){ if(this.dataset.value !== nativeSelect.value) this.style.background='#f4f3ff'; };
-      opt.onmouseleave = function(){ if(this.dataset.value !== nativeSelect.value) this.style.background='#fff'; };
+      opt.addEventListener('mouseover', function () {
+        if (nativeSel.value !== this.dataset.value) this.style.background = '#f4f3ff';
+      });
+      opt.addEventListener('mouseout', function () {
+        if (nativeSel.value !== this.dataset.value) this.style.background = '#fff';
+      });
 
       list.appendChild(opt);
     });
 
-    csel.appendChild(list);
-    wrap.appendChild(csel);
+    // ── State & helpers ───────────────────────────────────────
+    var isOpen = false;
 
-    // ── Select first option by default ───────────────────────
-    selectOption(methods[0], nativeSelect, trigImg, trigLabel);
+    function reposition() {
+      var r      = trigger.getBoundingClientRect();
+      var viewH  = window.innerHeight;
+      var viewW  = window.innerWidth;
+      var below  = viewH - r.bottom - 8;
+      var above  = r.top - 8;
+      var maxH   = Math.min(280, Math.max(below >= 120 ? below : above, 120));
+      var width  = Math.min(r.width, viewW - 16);
+      var left   = Math.max(8, Math.min(r.left, viewW - width - 8));
 
-    csel._open = false;
+      list.style.width     = width + 'px';
+      list.style.left      = left  + 'px';
+      list.style.maxHeight = maxH  + 'px';
 
-    // Move list to document.body so it is never clipped by parent overflow:hidden
-    document.body.appendChild(list);
+      if (below >= 120 || below >= above) {
+        list.style.top    = (r.bottom + 4) + 'px';
+        list.style.bottom = 'auto';
+      } else {
+        list.style.bottom = (viewH - r.top + 4) + 'px';
+        list.style.top    = 'auto';
+      }
+    }
 
-    function openDropdown() {
-      csel._open = true;
-      repositionList();
-      list.style.display = 'block';
-      trigArrow.style.transform = 'translateY(-50%) rotate(180deg)';
+    function openList() {
+      isOpen = true;
+      reposition();
+      list.style.display    = 'block';
       trigger.style.borderColor = '#38385f';
+      trigArrow.style.transform = 'translateY(-50%) rotate(180deg)';
+      trigArrow.style.color     = '#38385f';
     }
-    function closeDropdown() {
-      csel._open = false;
-      list.style.display = 'none';
-      trigArrow.style.transform = 'translateY(-50%) rotate(0deg)';
-      trigger.style.borderColor = '#d9d9d9';
-    }
-    // Keep list aligned during scroll / orientation change
-    window.addEventListener('scroll', function(){ if(csel._open) repositionList(); }, true);
-    window.addEventListener('resize', function(){ if(csel._open) repositionList(); });
 
-    // ── Toggle open/close ─────────────────────────────────────
+    function closeList() {
+      isOpen = false;
+      list.style.display    = 'none';
+      trigger.style.borderColor = '#d9d9d9';
+      trigArrow.style.transform = 'translateY(-50%) rotate(0deg)';
+      trigArrow.style.color     = '#aaa';
+    }
+
+    function selectMethod(m) {
+      nativeSel.value = m.code;
+
+      trigIcon.innerHTML  = '';
+      trigIcon.appendChild(makeCompositeIcon(m, 24));
+      trigIcon.style.cssText = 'display:inline-block;flex-shrink:0;line-height:0;';
+
+      trigLabel.textContent = m.name || m.code;
+      trigLabel.style.color = '#222';
+
+      list.querySelectorAll('[data-value]').forEach(function (o) {
+        o.style.background = o.dataset.value === m.code ? '#ededfc' : '#fff';
+      });
+    }
+
+    // Auto-select first method on load
+    selectMethod(methods[0]);
+
+    // Toggle trigger
     trigger.addEventListener('click', function (e) {
       e.stopPropagation();
-      if (csel._open) { closeDropdown(); } else { closeAllDropdowns(); openDropdown(); }
+      isOpen ? closeList() : openList();
     });
 
-    // ── Option click ──────────────────────────────────────────
+    // Option click
     list.addEventListener('click', function (e) {
-      var opt = e.target.closest ? e.target.closest('[data-value]') : (function(el){ while(el && !el.dataset.value) el=el.parentNode; return el; })(e.target);
+      var opt = e.target;
+      while (opt && opt !== list && !opt.dataset.value) opt = opt.parentNode;
       if (!opt || !opt.dataset.value) return;
-      // Reset all option backgrounds
-      var allOpts = list.querySelectorAll('[data-value]');
-      allOpts.forEach(function(o){ o.style.background = '#fff'; });
-      opt.style.background = '#ededfc';
-      var optName = opt.querySelector('span');
-      selectOption({
+      selectMethod({
         code:       opt.dataset.value,
-        iconUrl:    opt.dataset.icon,
         coinSymbol: opt.dataset.symbol,
         network:    opt.dataset.network,
-        name:       optName ? optName.textContent : opt.dataset.value,
-      }, nativeSelect, trigImg, trigLabel);
-      closeDropdown();
+        name:       opt.dataset.name,
+      });
+      closeList();
     });
 
-    // ── Close on outside click ────────────────────────────────
-    document.addEventListener('click', function () { if(csel._open) closeDropdown(); });
-    csel.addEventListener('click', function (e) { e.stopPropagation(); });
-  }
+    // Close on outside click
+    document.addEventListener('click', function (e) {
+      if (isOpen && !trigger.contains(e.target) && !list.contains(e.target)) closeList();
+    });
 
-  function selectOption(m, nativeSelect, trigImg, trigLabel) {
-    if (!m) return;
-    nativeSelect.value = m.code;
-    // Rebuild composite icon in the trigger
-    trigImg.innerHTML = '';
-    var ic = makeCompositeIcon(m, 24);
-    trigImg.appendChild(ic);
-    trigImg.style.display = 'inline-flex';
-    trigLabel.textContent = m.name || m.code;
-  }
+    // Reposition during scroll / resize (covers mobile orientation change)
+    window.addEventListener('scroll', function () { if (isOpen) reposition(); }, true);
+    window.addEventListener('resize', function () { if (isOpen) reposition(); });
 
-  function closeAllDropdowns() {
-    // Inline-style dropdowns close themselves via their own closeDropdown fn;
-    // this is a no-op stub kept for compatibility.
+    trigger.addEventListener('mouseenter', function () { if (!isOpen) trigger.style.borderColor = '#38385f'; });
+    trigger.addEventListener('mouseleave', function () { if (!isOpen) trigger.style.borderColor = '#d9d9d9'; });
   }
-
-  // kept for compatibility — no-op now that custom dropdown handles icon
-  function updateCoinIcon() {}
 
   // ── Form Binding ───────────────────────────────────────────
   function bindForm() {
     var qtyInput = document.getElementById('icox_quantity');
     var buyBtn   = document.getElementById('fe-buy-btn');
-
     if (qtyInput) {
-      qtyInput.addEventListener('input', calcTotal);
+      qtyInput.addEventListener('input',  calcTotal);
       qtyInput.addEventListener('change', calcTotal);
     }
     if (buyBtn) buyBtn.addEventListener('click', handleBuyClick);
@@ -327,45 +363,36 @@
     if (!qtyInput || !totalInput) return;
     var qty = parseFloat(qtyInput.value);
     totalInput.value = (!isNaN(qty) && qty > 0)
-      ? '$' + (qty * appConfig.tokenPriceUsd).toFixed(2)
-      : '';
+      ? '$' + (qty * appConfig.tokenPriceUsd).toFixed(2) : '';
   }
 
-  // ── Buy Button Click ───────────────────────────────────────
+  // ── Buy Button ─────────────────────────────────────────────
   async function handleBuyClick() {
-    var qty     = parseInt(document.getElementById('icox_quantity').value, 10);
-    var method  = document.getElementById('payment_method').value;
-    var wallet  = document.getElementById('receiving_wallet').value.trim();
+    var qty    = parseInt(document.getElementById('icox_quantity').value, 10);
+    var method = document.getElementById('payment_method').value;
+    var wallet = document.getElementById('receiving_wallet').value.trim();
 
     clearFormError();
 
-    // Client-side pre-validation
-    if (!qty || isNaN(qty) || qty < appConfig.minOrderQty) {
+    if (!qty || isNaN(qty) || qty < appConfig.minOrderQty)
       return showFormError('Minimum quantity is ' + appConfig.minOrderQty + ' ' + appConfig.tokenSymbol);
-    }
-    if (!method) return showFormError('Please select a payment method.');
+    if (!method) return showFormError('Please choose a payment currency.');
     if (!wallet) return showFormError('Please enter your BEP-20 wallet address.');
-    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return showFormError('Invalid wallet address. Must be a 42-character hex address starting with 0x.');
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet))
+      return showFormError('Invalid wallet address. Must be a 42-character hex address starting with 0x.');
 
     setBuyLoading(true);
-
     try {
       var res  = await fetch(API + '/order', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: qty, payment_method_code: method, receiving_wallet: wallet }),
+        body:    JSON.stringify({ quantity: qty, payment_method_code: method, receiving_wallet: wallet }),
       });
       var data = await res.json();
-
       if (!res.ok) return showFormError(data.error || 'Order creation failed');
-
-      // Save to localStorage for recovery
       saveOrderToStorage(data);
-
-      // Show modal
       showModal(data);
       startPolling(data.orderId);
-
     } catch (err) {
       showFormError('Network error. Please check your connection and try again.');
     } finally {
@@ -378,7 +405,7 @@
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({
         orderId:            order.orderId,
-        receivingWallet:    order.paymentAddress ? order.paymentAddress : '',
+        receivingWallet:    order.paymentAddress || '',
         uniqueCryptoAmount: order.uniqueCryptoAmount,
         coinSymbol:         order.coinSymbol,
         tokenAmount:        order.tokenAmount,
@@ -394,90 +421,69 @@
       var saved = localStorage.getItem(LS_KEY);
       if (!saved) return;
       var data = JSON.parse(saved);
-
       if (!data.orderId) return;
       if (new Date(data.expiresAt) < new Date()) { localStorage.removeItem(LS_KEY); return; }
 
-      // Poll for current status
       var res   = await fetch(API + '/order/' + data.orderId);
       var order = await res.json();
-
       if (!res.ok || !['waiting_payment', 'matched', 'sending'].includes(order.status)) {
-        localStorage.removeItem(LS_KEY);
-        return;
+        localStorage.removeItem(LS_KEY); return;
       }
-
-      // Show banner
       var banner   = document.getElementById('fe-pending-banner');
       var infoSpan = document.getElementById('fe-banner-info');
       if (banner) {
         banner.style.display = 'block';
-        if (infoSpan) {
-          infoSpan.textContent = '— ' + data.tokenAmount + ' ' + appConfig.tokenSymbol
-            + ' · ' + order.timeRemaining.display + ' remaining';
-        }
-        // Store for resume
+        if (infoSpan) infoSpan.textContent = '— ' + data.tokenAmount + ' ' + appConfig.tokenSymbol
+          + ' · ' + order.timeRemaining.display + ' remaining';
         banner.dataset.orderId = data.orderId;
       }
-    } catch (e) {
-      localStorage.removeItem(LS_KEY);
-    }
+    } catch (e) { localStorage.removeItem(LS_KEY); }
   }
 
   function bindBanner() {
-    var resumeBtn  = document.getElementById('fe-banner-resume');
-    var dismissBtn = document.getElementById('fe-banner-dismiss');
+    var resumeBtn   = document.getElementById('fe-banner-resume');
+    var dismissBtn  = document.getElementById('fe-banner-dismiss');
     var checkToggle = document.getElementById('fe-check-toggle');
-    var checkForm  = document.getElementById('fe-check-form');
-    var lookupBtn  = document.getElementById('fe-lookup-btn');
+    var lookupBtn   = document.getElementById('fe-lookup-btn');
 
     if (resumeBtn) resumeBtn.addEventListener('click', async function () {
       var orderId = document.getElementById('fe-pending-banner').dataset.orderId;
       if (!orderId) return;
       try {
-        var res   = await fetch(API + '/order/' + orderId);
+        var res = await fetch(API + '/order/' + orderId);
         var order = await res.json();
-        if (!res.ok) return;
-        showModalFromOrder(order);
-        startPolling(orderId);
+        if (res.ok) { showModalFromOrder(order); startPolling(orderId); }
       } catch (e) {}
     });
 
     if (dismissBtn) dismissBtn.addEventListener('click', function () {
       dismissed = true;
-      var banner = document.getElementById('fe-pending-banner');
-      if (banner) banner.style.display = 'none';
+      var b = document.getElementById('fe-pending-banner');
+      if (b) b.style.display = 'none';
     });
 
     if (checkToggle) checkToggle.addEventListener('click', function () {
-      var form = document.getElementById('fe-check-form');
-      if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+      var f = document.getElementById('fe-check-form');
+      if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
     });
 
     if (lookupBtn) lookupBtn.addEventListener('click', async function () {
-      var wallet   = document.getElementById('fe-lookup-wallet').value.trim();
-      var errorEl  = document.getElementById('fe-lookup-error');
+      var wallet  = document.getElementById('fe-lookup-wallet').value.trim();
+      var errorEl = document.getElementById('fe-lookup-error');
       errorEl.style.display = 'none';
-
       if (!wallet || wallet.length < 20) {
         errorEl.textContent = 'Please enter your wallet address';
-        errorEl.style.display = 'block';
-        return;
+        errorEl.style.display = 'block'; return;
       }
-
       lookupBtn.textContent = 'Searching…';
       lookupBtn.disabled    = true;
-
       try {
         var res  = await fetch(API + '/order/lookup?wallet=' + encodeURIComponent(wallet));
         var data = await res.json();
-
         if (!res.ok) {
           errorEl.textContent = data.error || 'No active order found';
-          errorEl.style.display = 'block';
-          return;
+          errorEl.style.display = 'block'; return;
         }
-
         showModalFromOrder(data);
         startPolling(data.orderId);
         document.getElementById('fe-check-form').style.display = 'none';
@@ -514,30 +520,18 @@
 
   // ── Modal ──────────────────────────────────────────────────
   function injectModal() {
-    var html = '<div id="fe-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,10,30,.9);z-index:9999;overflow-y:auto;backdrop-filter:blur(4px);">'
+    var html = '<div id="fe-overlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,10,30,.9);z-index:99999;overflow-y:auto;backdrop-filter:blur(4px);">'
       + '<div style="max-width:500px;margin:40px auto;padding:16px;">'
       + '<div style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5);">'
-
-      // Header
       + '<div style="background:linear-gradient(135deg,#38385f,#5c5c9e);padding:22px 24px;color:#fff;display:flex;justify-content:space-between;align-items:flex-start;">'
       + '<div><h5 style="margin:0;font-size:17px;font-weight:700;">Complete Your Purchase</h5>'
       + '<p id="fe-modal-sub" style="margin:4px 0 0;font-size:12px;opacity:.75;">Send payment to receive your tokens</p></div>'
       + '<button id="fe-close" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer;line-height:1;">&times;</button>'
       + '</div>'
-
-      // Status Banner
       + '<div id="fe-status" style="padding:9px 24px;font-size:13px;font-weight:600;text-align:center;background:#fff8e1;color:#7c6a00;">⏳ Awaiting Payment</div>'
-
-      // Body
       + '<div style="padding:22px;">'
-
-      // Timer
-      + '<div style="text-align:center;margin-bottom:18px;">'
-      + '<div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Time Remaining</div>'
-      + '<div id="fe-timer" style="font-size:34px;font-weight:700;color:#38385f;font-family:monospace;">30:00</div>'
-      + '</div>'
-
-      // Amount box
+      + '<div style="text-align:center;margin-bottom:18px;"><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Time Remaining</div>'
+      + '<div id="fe-timer" style="font-size:34px;font-weight:700;color:#38385f;font-family:monospace;">30:00</div></div>'
       + '<div style="background:#f8f7ff;border:2px dashed #b0aee0;border-radius:12px;padding:16px;margin-bottom:14px;text-align:center;">'
       + '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Send Exactly This Amount</div>'
       + '<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;">'
@@ -547,75 +541,36 @@
       + '</div>'
       + '<button id="fe-copy-amount" style="font-size:12px;background:#38385f;color:#fff;border:none;padding:4px 14px;border-radius:20px;cursor:pointer;">Copy Amount</button>'
       + '</div>'
-
-      // QR + Address
       + '<div style="display:flex;gap:12px;margin-bottom:14px;align-items:flex-start;">'
       + '<img id="fe-qr" src="" alt="QR" style="width:80px;height:80px;border-radius:8px;border:1px solid #e8e7ff;flex-shrink:0;">'
-      + '<div style="flex:1;">'
-      + '<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Payment Address</div>'
+      + '<div style="flex:1;"><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Payment Address</div>'
       + '<div style="background:#f5f5f5;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:6px;">'
       + '<span id="fe-address" style="font-size:11px;font-family:monospace;word-break:break-all;flex:1;color:#333;">—</span>'
       + '<button id="fe-copy-addr" style="background:#38385f;color:#fff;border:none;padding:4px 8px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap;">Copy</button>'
-      + '</div>'
-      + '</div>'
-      + '</div>'
-
-      // Info row
+      + '</div></div></div>'
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">'
-      + '<div style="background:#f8f7ff;border-radius:8px;padding:10px;text-align:center;">'
-      + '<div style="font-size:10px;color:#888;text-transform:uppercase;">You Receive</div>'
-      + '<div id="fe-tokens" style="font-size:16px;font-weight:700;color:#38385f;margin-top:2px;">—</div>'
-      + '</div>'
-      + '<div style="background:#f8f7ff;border-radius:8px;padding:10px;text-align:center;">'
-      + '<div style="font-size:10px;color:#888;text-transform:uppercase;">Network</div>'
-      + '<div id="fe-network" style="font-size:14px;font-weight:700;color:#38385f;margin-top:2px;">—</div>'
-      + '</div>'
-      + '</div>'
-
-      // Warning
+      + '<div style="background:#f8f7ff;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:10px;color:#888;text-transform:uppercase;">You Receive</div>'
+      + '<div id="fe-tokens" style="font-size:16px;font-weight:700;color:#38385f;margin-top:2px;">—</div></div>'
+      + '<div style="background:#f8f7ff;border-radius:8px;padding:10px;text-align:center;"><div style="font-size:10px;color:#888;text-transform:uppercase;">Network</div>'
+      + '<div id="fe-network" style="font-size:14px;font-weight:700;color:#38385f;margin-top:2px;">—</div></div></div>'
       + '<div style="background:#fff3cd;border-radius:8px;padding:10px;font-size:12px;color:#664d03;margin-bottom:14px;">'
-      + '⚠️ <strong>Important:</strong> Send the <em>exact</em> amount shown. The unique decimal is your order fingerprint — a different amount will not be matched automatically.'
-      + '</div>'
-
-      // TX section (shown on completion)
+      + '⚠️ <strong>Important:</strong> Send the <em>exact</em> amount shown. The unique decimal is your order fingerprint — a different amount will not be matched automatically.</div>'
       + '<div id="fe-tx-section" style="display:none;background:#d4edda;border-radius:8px;padding:12px;margin-bottom:14px;">'
       + '<div style="font-weight:700;color:#155724;margin-bottom:4px;">✅ Tokens Sent!</div>'
-      + '<a id="fe-tx-link" href="#" target="_blank" style="color:#0d6efd;font-size:11px;font-family:monospace;word-break:break-all;">View Transaction</a>'
-      + '</div>'
-
-      // New order button (shown on expiry)
+      + '<a id="fe-tx-link" href="#" target="_blank" style="color:#0d6efd;font-size:11px;font-family:monospace;word-break:break-all;">View Transaction</a></div>'
       + '<div id="fe-expired-section" style="display:none;text-align:center;">'
       + '<button id="fe-new-order-btn" style="background:#38385f;color:#fff;border:none;padding:10px 28px;border-radius:20px;cursor:pointer;font-size:14px;">Create New Order</button>'
-      + '</div>'
-
-      + '</div>' // /body
-      + '</div>' // /card
-      + '</div>' // /inner
-      + '</div>'; // /overlay
+      + '</div></div></div></div></div>';
 
     var el = document.createElement('div');
     el.innerHTML = html;
     document.body.appendChild(el.firstChild);
 
-    // Bind close
     document.getElementById('fe-close').addEventListener('click', closeModal);
-    document.getElementById('fe-overlay').addEventListener('click', function (e) {
-      if (e.target === this) closeModal();
-    });
-
-    // Copy buttons
-    document.getElementById('fe-copy-amount').addEventListener('click', function () {
-      copyText(document.getElementById('fe-amount').textContent, this);
-    });
-    document.getElementById('fe-copy-addr').addEventListener('click', function () {
-      copyText(document.getElementById('fe-address').textContent, this);
-    });
-
-    // New order button
-    document.getElementById('fe-new-order-btn').addEventListener('click', function () {
-      closeModal();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
+    document.getElementById('fe-overlay').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
+    document.getElementById('fe-copy-amount').addEventListener('click', function () { copyText(document.getElementById('fe-amount').textContent, this); });
+    document.getElementById('fe-copy-addr').addEventListener('click', function () { copyText(document.getElementById('fe-address').textContent, this); });
+    document.getElementById('fe-new-order-btn').addEventListener('click', function () { closeModal(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
   }
 
   function showModal(order) {
@@ -626,20 +581,12 @@
   }
 
   function showModalFromOrder(order) {
-    // Map lookup/status response to modal fields
-    var mapped = {
-      orderId:            order.orderId,
-      paymentAddress:     order.paymentAddress,
-      qrDataUrl:          null,
-      uniqueCryptoAmount: order.uniqueCryptoAmount,
-      coinSymbol:         order.coinSymbol,
-      network:            order.network,
-      tokenAmount:        order.tokenAmount,
-      expiresAt:          order.expiresAt,
-      txHashOut:          order.txHashOut,
-      status:             order.status,
-    };
-    populateModal(mapped);
+    populateModal({
+      orderId: order.orderId, paymentAddress: order.paymentAddress, qrDataUrl: null,
+      uniqueCryptoAmount: order.uniqueCryptoAmount, coinSymbol: order.coinSymbol,
+      network: order.network, tokenAmount: order.tokenAmount, expiresAt: order.expiresAt,
+      txHashOut: order.txHashOut, status: order.status,
+    });
     updateModalStatus(order);
     document.getElementById('fe-overlay').style.display = 'block';
     document.body.style.overflow = 'hidden';
@@ -647,90 +594,66 @@
   }
 
   function populateModal(order) {
-    setText('fe-amount', order.uniqueCryptoAmount);
+    setText('fe-amount',  order.uniqueCryptoAmount);
     setText('fe-coin-sym', order.coinSymbol || '');
     setText('fe-address', order.paymentAddress || '');
-    setText('fe-tokens', formatNum(order.tokenAmount) + ' ' + appConfig.tokenSymbol);
+    setText('fe-tokens',  formatNum(order.tokenAmount) + ' ' + appConfig.tokenSymbol);
     setText('fe-network', (order.network || '').toUpperCase());
 
-    // Coin icon
-    var methods = appConfig.paymentMethods || [];
-    var found   = methods.find(function (m) { return m.coinSymbol === order.coinSymbol; });
     var coinImg = document.getElementById('fe-coin-img');
-    if (found && coinImg) {
-      coinImg.src   = found.iconUrl;
+    if (coinImg && order.coinSymbol) {
+      coinImg.src = ICON_CDN + '/' + order.coinSymbol.toLowerCase() + '.svg';
       coinImg.style.display = 'block';
-      coinImg.onerror = function () { coinImg.style.display = 'none'; };
+      coinImg.onerror = function () { this.style.display = 'none'; };
     }
 
-    // QR
     var qrImg = document.getElementById('fe-qr');
     if (qrImg) {
-      if (order.qrDataUrl) {
-        qrImg.src = order.qrDataUrl;
-      } else if (order.paymentAddress) {
-        // Fallback to QR API
-        qrImg.src = 'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=' + encodeURIComponent(order.paymentAddress);
-      }
+      qrImg.src = order.qrDataUrl ||
+        'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=' + encodeURIComponent(order.paymentAddress || '');
     }
 
-    // Modal subtitle
-    setText('fe-modal-sub', 'Send ' + (order.coinSymbol || '') + ' on ' + ((order.network || '').toUpperCase() || '') + ' to receive tokens');
-
+    setText('fe-modal-sub', 'Send ' + (order.coinSymbol || '') + ' on ' + (order.network || '').toUpperCase() + ' to receive tokens');
     setStatusBanner('waiting_payment');
-    document.getElementById('fe-tx-section').style.display     = 'none';
-    document.getElementById('fe-expired-section').style.display = 'none';
+    document.getElementById('fe-tx-section').style.display      = 'none';
+    document.getElementById('fe-expired-section').style.display  = 'none';
   }
 
   function updateModalStatus(order) {
     setStatusBanner(order.status);
-
-    if (order.timeRemaining) {
-      setText('fe-timer', order.timeRemaining.display);
-    }
-
+    if (order.timeRemaining) setText('fe-timer', order.timeRemaining.display);
     if (order.status === 'completed' && order.txHashOut) {
       document.getElementById('fe-tx-section').style.display = 'block';
       var link = document.getElementById('fe-tx-link');
-      link.href        = order.txHashOut.url;
-      link.textContent = order.txHashOut.hash;
+      link.href = order.txHashOut.url; link.textContent = order.txHashOut.hash;
     }
-
-    if (order.status === 'expired') {
-      document.getElementById('fe-expired-section').style.display = 'block';
-    }
+    if (order.status === 'expired') document.getElementById('fe-expired-section').style.display = 'block';
   }
 
   var STATUS_CFG = {
-    waiting_payment: { text: '⏳ Awaiting Payment',           bg: '#fff8e1', color: '#7c6a00' },
+    waiting_payment: { text: '⏳ Awaiting Payment',               bg: '#fff8e1', color: '#7c6a00' },
     matched:         { text: '🔍 Payment Detected — Processing…', bg: '#e3f2fd', color: '#0d47a1' },
     sending:         { text: '📤 Sending Tokens to Your Wallet…', bg: '#e8f5e9', color: '#1b5e20' },
-    completed:       { text: '✅ Complete! Tokens Sent',       bg: '#d4edda', color: '#155724' },
-    expired:         { text: '⏰ Order Expired',               bg: '#f8d7da', color: '#721c24' },
-    failed:          { text: '❌ Send Failed — Contact Support', bg: '#f8d7da', color: '#721c24' },
+    completed:       { text: '✅ Complete! Tokens Sent',           bg: '#d4edda', color: '#155724' },
+    expired:         { text: '⏰ Order Expired',                   bg: '#f8d7da', color: '#721c24' },
+    failed:          { text: '❌ Send Failed — Contact Support',   bg: '#f8d7da', color: '#721c24' },
   };
 
   function setStatusBanner(status) {
-    var el  = document.getElementById('fe-status');
+    var el = document.getElementById('fe-status');
     var cfg = STATUS_CFG[status] || STATUS_CFG.waiting_payment;
     if (!el) return;
-    el.textContent       = cfg.text;
-    el.style.background  = cfg.bg;
-    el.style.color       = cfg.color;
+    el.textContent = cfg.text; el.style.background = cfg.bg; el.style.color = cfg.color;
   }
 
   function startCountdown(expiresAt) {
     if (countdown) clearInterval(countdown);
     function tick() {
       var ms   = Math.max(0, expiresAt - Date.now());
-      var mins = Math.floor(ms / 60000);
-      var secs = Math.floor((ms % 60000) / 1000);
-      var timerEl = document.getElementById('fe-timer');
-      if (!timerEl) return;
-      timerEl.textContent = pad(mins) + ':' + pad(secs);
-      if (ms < 300000) timerEl.style.color = '#dc3545';
-      else if (ms < 600000) timerEl.style.color = '#fd7e14';
-      else timerEl.style.color = '#38385f';
+      var el   = document.getElementById('fe-timer');
+      if (!el) return;
+      el.textContent = pad(Math.floor(ms / 60000)) + ':' + pad(Math.floor((ms % 60000) / 1000));
+      el.style.color = ms < 300000 ? '#dc3545' : ms < 600000 ? '#fd7e14' : '#38385f';
       if (ms === 0) clearInterval(countdown);
     }
     tick();
@@ -738,43 +661,38 @@
   }
 
   function closeModal() {
-    var overlay = document.getElementById('fe-overlay');
-    if (overlay) overlay.style.display = 'none';
+    var o = document.getElementById('fe-overlay');
+    if (o) o.style.display = 'none';
     document.body.style.overflow = '';
     stopPolling();
     if (countdown) { clearInterval(countdown); countdown = null; }
-    // Recheck storage for banner
     setTimeout(checkLocalStorageOrder, 300);
   }
 
   // ── Helpers ────────────────────────────────────────────────
-  function setText(id, text) { var el = document.getElementById(id); if (el) el.textContent = text; }
+  function setText(id, val) { var e = document.getElementById(id); if (e) e.textContent = val; }
   function pad(n) { return String(n).padStart(2, '0'); }
   function formatNum(n) { return Number(n).toLocaleString('en-US'); }
 
   function copyText(text, btn) {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(function () {
-        var orig = btn.textContent;
-        btn.textContent    = 'Copied!';
-        btn.style.background = '#28a745';
-        setTimeout(function () { btn.textContent = orig; btn.style.background = ''; }, 1500);
-      });
-    }
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(function () {
+      var orig = btn.textContent;
+      btn.textContent = 'Copied!'; btn.style.background = '#28a745';
+      setTimeout(function () { btn.textContent = orig; btn.style.background = ''; }, 1500);
+    });
   }
 
-  function setBuyLoading(loading) {
+  function setBuyLoading(on) {
     var btn = document.getElementById('fe-buy-btn');
     if (!btn) return;
-    btn.disabled    = loading;
-    btn.textContent = loading ? 'Processing…' : 'Buy Flash Now';
+    btn.disabled = on; btn.textContent = on ? 'Processing…' : 'Buy Flash Now';
   }
 
   function showFormError(msg) {
     var el = document.getElementById('fe-form-error');
     if (!el) return;
-    el.textContent   = '⚠️ ' + msg;
-    el.style.display = 'block';
+    el.textContent = '⚠️ ' + msg; el.style.display = 'block';
   }
 
   function clearFormError() {
