@@ -5,9 +5,14 @@ const path = require('path');
 const config = require('../config');
 
 // ── Pool ─────────────────────────────────────────────────────
+// ssl.rejectUnauthorized=false is required for Coolify's internal PostgreSQL
+// which uses a self-signed certificate. Safe because the connection is internal
+// (container-to-container on a private Docker network).
+const sslConfig = { rejectUnauthorized: false };
+
 const poolConfig = config.databaseUrl
-  ? { connectionString: config.databaseUrl, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 }
-  : { ...config.db };
+  ? { connectionString: config.databaseUrl, ssl: sslConfig, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 }
+  : { ...config.db, ssl: sslConfig };
 
 const pool = new Pool(poolConfig);
 
