@@ -1,18 +1,5 @@
 'use strict';
 const { ethers } = require('ethers');
-const config = require('../config');
-
-let _provider = null;
-
-function getProvider() {
-  if (!_provider) {
-    _provider = new ethers.providers.FallbackProvider([
-      { provider: new ethers.providers.JsonRpcProvider(config.bscRpcUrl),         priority: 1, stallTimeout: 5000 },
-      { provider: new ethers.providers.JsonRpcProvider(config.bscRpcUrlFallback), priority: 2, stallTimeout: 7000 },
-    ]);
-  }
-  return _provider;
-}
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -21,9 +8,13 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  *
  * Checks:
  *   1. Format — starts with 0x, 42 chars, valid hex
- *   2. EIP-55 checksum via ethers
- *   3. Not zero address
- *   4. Not a smart contract (eth_getCode via BSC RPC)
+ *   2. Not zero address
+ *   3. EIP-55 checksum via ethers (normalises mixed-case inputs)
+ *
+ * NOTE: We intentionally do NOT call eth_getCode to check for contract bytecode.
+ * Smart contract wallets (Gnosis Safe, AA wallets, exchange custody contracts, etc.)
+ * are deployed contracts but are completely valid receiving addresses — blocking them
+ * causes false positives for real users without adding meaningful security.
  *
  * Returns { valid: true } or { valid: false, reason: string }
  */
@@ -44,21 +35,11 @@ async function validateBep20Wallet(address) {
     return { valid: false, reason: 'Zero address is not a valid receiving wallet.' };
   }
 
-  // 3. EIP-55 checksum (ethers normalises it — if it throws, it's malformed)
+  // 3. EIP-55 checksum — ethers normalises it; throws if address is malformed
   try {
     ethers.utils.getAddress(trimmed);
   } catch {
     return { valid: false, reason: 'Invalid wallet address checksum.' };
-  }
-
-  // 4. Contract check via BSC RPC
-  try {
-    const code = await getProvider().getCode(trimmed);
-    if (code && code !== '0x') {
-      return { valid: false, reason: 'This address belongs to a smart contract. Tokens sent to contracts may be lost. Please use a personal wallet address.' };
-    }
-  } catch {
-    // RPC unavailable — don't block the order, just skip contract check
   }
 
   return { valid: true };
