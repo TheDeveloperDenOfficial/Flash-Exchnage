@@ -63,33 +63,148 @@
     if (!select) return;
 
     var methods = appConfig.paymentMethods;
+
+    // Populate hidden native select (used for form value reads)
     if (!methods || !methods.length) {
       select.innerHTML = '<option value="">No payment methods available</option>';
+      buildCustomDropdown(select, []);
       return;
     }
-
     select.innerHTML = methods.map(function (m) {
       return '<option value="' + m.code + '" data-icon="' + m.iconUrl + '" data-symbol="' + m.coinSymbol + '">' + m.name + '</option>';
     }).join('');
 
-    // Show icon for selected method
-    updateCoinIcon();
-    select.addEventListener('change', updateCoinIcon);
+    buildCustomDropdown(select, methods);
   }
 
-  function updateCoinIcon() {
-    var select = document.getElementById('payment_method');
-    var icon   = document.getElementById('fe-coin-icon');
-    if (!select || !icon) return;
-    var opt = select.options[select.selectedIndex];
-    if (opt && opt.dataset.icon) {
-      icon.src   = opt.dataset.icon;
-      icon.style.display = 'block';
-      icon.onerror = function () { icon.style.display = 'none'; };
-    } else {
-      icon.style.display = 'none';
+  function buildCustomDropdown(nativeSelect, methods) {
+    // Hide native select and overlay icon (we replace both)
+    nativeSelect.style.display = 'none';
+    var oldIcon = document.getElementById('fe-coin-icon');
+    if (oldIcon) oldIcon.style.display = 'none';
+
+    var wrap = nativeSelect.parentNode;
+
+    // Remove any previous custom dropdown
+    var prev = wrap.querySelector('.fe-csel');
+    if (prev) prev.parentNode.removeChild(prev);
+
+    if (!methods.length) {
+      var empty = document.createElement('div');
+      empty.className = 'fe-csel';
+      empty.style.cssText = 'border:1px solid #d9d9d9;border-radius:6px;padding:10px 14px;color:#888;background:#fff;font-size:14px;';
+      empty.textContent = 'No payment methods available';
+      wrap.appendChild(empty);
+      return;
     }
+
+    // ── Styles (injected once) ────────────────────────────────
+    if (!document.getElementById('fe-csel-style')) {
+      var style = document.createElement('style');
+      style.id = 'fe-csel-style';
+      style.textContent = [
+        '.fe-csel{position:relative;user-select:none;font-family:inherit;}',
+        '.fe-csel-trigger{display:flex;align-items:center;gap:10px;padding:10px 36px 10px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;transition:border-color .2s;}',
+        '.fe-csel-trigger:hover,.fe-csel.open .fe-csel-trigger{border-color:#38385f;}',
+        '.fe-csel-trigger img{width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;}',
+        '.fe-csel-trigger .fe-csel-label{flex:1;font-size:14px;color:#333;}',
+        '.fe-csel-trigger .fe-csel-arrow{position:absolute;right:12px;top:50%;transform:translateY(-50%) rotate(0deg);transition:transform .2s;font-size:10px;color:#888;}',
+        '.fe-csel.open .fe-csel-arrow{transform:translateY(-50%) rotate(180deg);}',
+        '.fe-csel-list{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #d0d0e8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:999;max-height:260px;overflow-y:auto;}',
+        '.fe-csel.open .fe-csel-list{display:block;}',
+        '.fe-csel-opt{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background .15s;}',
+        '.fe-csel-opt:hover{background:#f4f3ff;}',
+        '.fe-csel-opt.selected{background:#ededfc;}',
+        '.fe-csel-opt img{width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0;}',
+        '.fe-csel-opt-name{font-size:14px;color:#333;font-weight:500;}',
+        '.fe-csel-opt-sym{font-size:11px;color:#888;margin-left:auto;}',
+      ].join('');
+      document.head.appendChild(style);
+    }
+
+    // ── Build DOM ─────────────────────────────────────────────
+    var csel = document.createElement('div');
+    csel.className = 'fe-csel';
+
+    // Trigger (shows selected item)
+    var trigger = document.createElement('div');
+    trigger.className = 'fe-csel-trigger';
+    trigger.innerHTML = '<img src="" alt="" style="display:none;"><span class="fe-csel-label">Select payment method</span><span class="fe-csel-arrow">▼</span>';
+    csel.appendChild(trigger);
+
+    // List of options
+    var list = document.createElement('div');
+    list.className = 'fe-csel-list';
+
+    methods.forEach(function (m, idx) {
+      var opt = document.createElement('div');
+      opt.className = 'fe-csel-opt' + (idx === 0 ? ' selected' : '');
+      opt.dataset.value  = m.code;
+      opt.dataset.icon   = m.iconUrl || '';
+      opt.dataset.symbol = m.coinSymbol || '';
+      opt.innerHTML = '<img src="' + (m.iconUrl || '') + '" alt="' + m.coinSymbol + '">'
+        + '<span class="fe-csel-opt-name">' + m.name + '</span>'
+        + '<span class="fe-csel-opt-sym">' + m.coinSymbol + '</span>';
+      list.appendChild(opt);
+    });
+
+    csel.appendChild(list);
+    wrap.appendChild(csel);
+
+    // ── Select first option by default ───────────────────────
+    selectOption(methods[0], nativeSelect, trigger, list);
+
+    // ── Toggle open/close ─────────────────────────────────────
+    trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var isOpen = csel.classList.contains('open');
+      closeAllDropdowns();
+      if (!isOpen) csel.classList.add('open');
+    });
+
+    // ── Option click ──────────────────────────────────────────
+    list.addEventListener('click', function (e) {
+      var opt = e.target.closest('.fe-csel-opt');
+      if (!opt) return;
+      list.querySelectorAll('.fe-csel-opt').forEach(function (o) { o.classList.remove('selected'); });
+      opt.classList.add('selected');
+      selectOption({
+        code:       opt.dataset.value,
+        iconUrl:    opt.dataset.icon,
+        coinSymbol: opt.dataset.symbol,
+        name:       opt.querySelector('.fe-csel-opt-name').textContent,
+      }, nativeSelect, trigger, list);
+      csel.classList.remove('open');
+    });
+
+    // ── Close on outside click ────────────────────────────────
+    document.addEventListener('click', function () { csel.classList.remove('open'); });
+    csel.addEventListener('click', function (e) { e.stopPropagation(); });
   }
+
+  function selectOption(m, nativeSelect, trigger, list) {
+    if (!m) return;
+    // Sync hidden native select
+    nativeSelect.value = m.code;
+    // Update trigger display
+    var img   = trigger.querySelector('img');
+    var label = trigger.querySelector('.fe-csel-label');
+    if (m.iconUrl) {
+      img.src           = m.iconUrl;
+      img.style.display = 'block';
+      img.onerror       = function () { img.style.display = 'none'; };
+    } else {
+      img.style.display = 'none';
+    }
+    label.textContent = m.name || m.code;
+  }
+
+  function closeAllDropdowns() {
+    document.querySelectorAll('.fe-csel.open').forEach(function (d) { d.classList.remove('open'); });
+  }
+
+  // kept for compatibility — no-op now that custom dropdown handles icon
+  function updateCoinIcon() {}
 
   // ── Form Binding ───────────────────────────────────────────
   function bindForm() {
