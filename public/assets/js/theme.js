@@ -98,53 +98,75 @@
       return;
     }
 
-    // ── Styles (injected once) ────────────────────────────────
-    if (!document.getElementById('fe-csel-style')) {
-      var style = document.createElement('style');
-      style.id = 'fe-csel-style';
-      style.textContent = [
-        '.fe-csel{position:relative;user-select:none;font-family:inherit;}',
-        '.fe-csel-trigger{display:flex;align-items:center;gap:10px;padding:10px 36px 10px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;transition:border-color .2s;}',
-        '.fe-csel-trigger:hover,.fe-csel.open .fe-csel-trigger{border-color:#38385f;}',
-        '.fe-csel-trigger img{width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;}',
-        '.fe-csel-trigger .fe-csel-label{flex:1;font-size:14px;color:#333;}',
-        '.fe-csel-trigger .fe-csel-arrow{position:absolute;right:12px;top:50%;transform:translateY(-50%) rotate(0deg);transition:transform .2s;font-size:10px;color:#888;}',
-        '.fe-csel.open .fe-csel-arrow{transform:translateY(-50%) rotate(180deg);}',
-        '.fe-csel-list{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #d0d0e8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:999;max-height:260px;overflow-y:auto;}',
-        '.fe-csel.open .fe-csel-list{display:block;}',
-        '.fe-csel-opt{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background .15s;}',
-        '.fe-csel-opt:hover{background:#f4f3ff;}',
-        '.fe-csel-opt.selected{background:#ededfc;}',
-        '.fe-csel-opt img{width:26px;height:26px;border-radius:50%;object-fit:cover;flex-shrink:0;}',
-        '.fe-csel-opt-name{font-size:14px;color:#333;font-weight:500;}',
-        '.fe-csel-opt-sym{font-size:11px;color:#888;margin-left:auto;}',
-      ].join('');
-      document.head.appendChild(style);
-    }
-
-    // ── Build DOM ─────────────────────────────────────────────
+    // ── Build DOM (all inline styles — immune to theme CSS overrides) ──
     var csel = document.createElement('div');
-    csel.className = 'fe-csel';
+    csel.style.cssText = 'position:relative;user-select:none;font-family:inherit;';
 
     // Trigger (shows selected item)
     var trigger = document.createElement('div');
-    trigger.className = 'fe-csel-trigger';
-    trigger.innerHTML = '<img src="" alt="" style="display:none;"><span class="fe-csel-label">Select payment method</span><span class="fe-csel-arrow">▼</span>';
+    trigger.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 36px 10px 12px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;cursor:pointer;transition:border-color .2s;position:relative;';
+    trigger.onmouseenter = function(){ this.style.borderColor='#38385f'; };
+    trigger.onmouseleave = function(){ this.style.borderColor= csel._open ? '#38385f' : '#d9d9d9'; };
+
+    var trigImg = document.createElement('img');
+    trigImg.style.cssText = 'width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;display:none;';
+    trigImg.alt = '';
+
+    var trigLabel = document.createElement('span');
+    trigLabel.style.cssText = 'flex:1;font-size:14px;color:#333;line-height:1.4;';
+    trigLabel.textContent = 'Select payment method';
+
+    var trigArrow = document.createElement('span');
+    trigArrow.style.cssText = 'position:absolute;right:12px;top:50%;transform:translateY(-50%) rotate(0deg);transition:transform .2s;font-size:10px;color:#888;';
+    trigArrow.textContent = '▼';
+
+    trigger.appendChild(trigImg);
+    trigger.appendChild(trigLabel);
+    trigger.appendChild(trigArrow);
     csel.appendChild(trigger);
 
-    // List of options
+    // Dropdown list
     var list = document.createElement('div');
-    list.className = 'fe-csel-list';
+    list.style.cssText = 'display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #d0d0e8;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:9999;max-height:260px;overflow-y:auto;';
 
     methods.forEach(function (m, idx) {
       var opt = document.createElement('div');
-      opt.className = 'fe-csel-opt' + (idx === 0 ? ' selected' : '');
+      opt.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:' + (idx === 0 ? '#ededfc' : '#fff') + ';transition:background .15s;';
       opt.dataset.value  = m.code;
       opt.dataset.icon   = m.iconUrl || '';
       opt.dataset.symbol = m.coinSymbol || '';
-      opt.innerHTML = '<img src="' + (m.iconUrl || '') + '" alt="' + m.coinSymbol + '">'
-        + '<span class="fe-csel-opt-name">' + m.name + '</span>'
-        + '<span class="fe-csel-opt-sym">' + m.coinSymbol + '</span>';
+
+      var optImg = document.createElement('img');
+      optImg.style.cssText = 'width:26px;height:26px;min-width:26px;border-radius:50%;object-fit:cover;flex-shrink:0;display:inline-block;';
+      optImg.src = m.iconUrl || '';
+      optImg.alt = m.coinSymbol || '';
+      optImg.onerror = function() {
+        // Fallback: coloured circle with coin initial
+        this.style.display = 'none';
+        if (!this.nextSibling || !this.nextSibling._isFallback) {
+          var fb = document.createElement('span');
+          fb._isFallback = true;
+          fb.style.cssText = 'width:26px;height:26px;min-width:26px;border-radius:50%;background:#38385f;color:#fff;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;';
+          fb.textContent = (m.coinSymbol || '?').slice(0,2).toUpperCase();
+          opt.insertBefore(fb, this.nextSibling);
+        }
+      };
+
+      var optName = document.createElement('span');
+      optName.style.cssText = 'font-size:14px;color:#333;font-weight:500;flex:1;';
+      optName.textContent = m.name;
+
+      var optSym = document.createElement('span');
+      optSym.style.cssText = 'font-size:11px;color:#888;';
+      optSym.textContent = m.coinSymbol || '';
+
+      opt.appendChild(optImg);
+      opt.appendChild(optName);
+      opt.appendChild(optSym);
+
+      opt.onmouseenter = function(){ if(this.dataset.value !== nativeSelect.value) this.style.background='#f4f3ff'; };
+      opt.onmouseleave = function(){ if(this.dataset.value !== nativeSelect.value) this.style.background='#fff'; };
+
       list.appendChild(opt);
     });
 
@@ -152,55 +174,68 @@
     wrap.appendChild(csel);
 
     // ── Select first option by default ───────────────────────
-    selectOption(methods[0], nativeSelect, trigger, list);
+    selectOption(methods[0], nativeSelect, trigImg, trigLabel);
+
+    csel._open = false;
+
+    function openDropdown() {
+      csel._open = true;
+      list.style.display = 'block';
+      trigArrow.style.transform = 'translateY(-50%) rotate(180deg)';
+      trigger.style.borderColor = '#38385f';
+    }
+    function closeDropdown() {
+      csel._open = false;
+      list.style.display = 'none';
+      trigArrow.style.transform = 'translateY(-50%) rotate(0deg)';
+      trigger.style.borderColor = '#d9d9d9';
+    }
 
     // ── Toggle open/close ─────────────────────────────────────
     trigger.addEventListener('click', function (e) {
       e.stopPropagation();
-      var isOpen = csel.classList.contains('open');
-      closeAllDropdowns();
-      if (!isOpen) csel.classList.add('open');
+      if (csel._open) { closeDropdown(); } else { closeAllDropdowns(); openDropdown(); }
     });
 
     // ── Option click ──────────────────────────────────────────
     list.addEventListener('click', function (e) {
-      var opt = e.target.closest('.fe-csel-opt');
-      if (!opt) return;
-      list.querySelectorAll('.fe-csel-opt').forEach(function (o) { o.classList.remove('selected'); });
-      opt.classList.add('selected');
+      var opt = e.target.closest ? e.target.closest('[data-value]') : (function(el){ while(el && !el.dataset.value) el=el.parentNode; return el; })(e.target);
+      if (!opt || !opt.dataset.value) return;
+      // Reset all option backgrounds
+      var allOpts = list.querySelectorAll('[data-value]');
+      allOpts.forEach(function(o){ o.style.background = '#fff'; });
+      opt.style.background = '#ededfc';
+      var optName = opt.querySelector('span');
       selectOption({
         code:       opt.dataset.value,
         iconUrl:    opt.dataset.icon,
         coinSymbol: opt.dataset.symbol,
-        name:       opt.querySelector('.fe-csel-opt-name').textContent,
-      }, nativeSelect, trigger, list);
-      csel.classList.remove('open');
+        name:       optName ? optName.textContent : opt.dataset.value,
+      }, nativeSelect, trigImg, trigLabel);
+      closeDropdown();
     });
 
     // ── Close on outside click ────────────────────────────────
-    document.addEventListener('click', function () { csel.classList.remove('open'); });
+    document.addEventListener('click', function () { if(csel._open) closeDropdown(); });
     csel.addEventListener('click', function (e) { e.stopPropagation(); });
   }
 
-  function selectOption(m, nativeSelect, trigger, list) {
+  function selectOption(m, nativeSelect, trigImg, trigLabel) {
     if (!m) return;
-    // Sync hidden native select
     nativeSelect.value = m.code;
-    // Update trigger display
-    var img   = trigger.querySelector('img');
-    var label = trigger.querySelector('.fe-csel-label');
     if (m.iconUrl) {
-      img.src           = m.iconUrl;
-      img.style.display = 'block';
-      img.onerror       = function () { img.style.display = 'none'; };
+      trigImg.src           = m.iconUrl;
+      trigImg.style.display = 'inline-block';
+      trigImg.onerror       = function () { trigImg.style.display = 'none'; };
     } else {
-      img.style.display = 'none';
+      trigImg.style.display = 'none';
     }
-    label.textContent = m.name || m.code;
+    trigLabel.textContent = m.name || m.code;
   }
 
   function closeAllDropdowns() {
-    document.querySelectorAll('.fe-csel.open').forEach(function (d) { d.classList.remove('open'); });
+    // Inline-style dropdowns close themselves via their own closeDropdown fn;
+    // this is a no-op stub kept for compatibility.
   }
 
   // kept for compatibility — no-op now that custom dropdown handles icon
