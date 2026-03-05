@@ -5,13 +5,41 @@ const path = require('path');
 const config = require('../config');
 
 // ── Pool ─────────────────────────────────────────────────────
-// ssl.rejectUnauthorized=false is required for Coolify's internal PostgreSQL
-// which uses a self-signed certificate. Safe because the connection is internal
-// (container-to-container on a private Docker network).
+// Coolify's internal PostgreSQL uses a self-signed certificate.
+// The connection is internal (container-to-container on a private Docker
+// network), so skipping cert verification is appropriate here.
+//
+// IMPORTANT: newer versions of pg (≥8.x) treat `sslmode=require` in the
+// connection string as `verify-full`, which overrides the `ssl` object and
+// causes "unable to verify the first certificate". We must strip any `sslmode`
+// query parameter from the DATABASE_URL before passing it to the Pool so that
+// the explicit `ssl` object below is the sole authority on SSL behaviour.
 const sslConfig = { rejectUnauthorized: false };
 
+/**
+ * Strip `sslmode` (and the legacy `uselibpqcompat`) query params from a
+ * postgres connection string so that pg's `ssl` pool option takes full effect.
+ */
+function sanitiseDatabaseUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete('sslmode');
+    parsed.searchParams.delete('uselibpqcompat');
+    return parsed.toString();
+  } catch {
+    // Not a valid URL (e.g. already a plain DSN) — return as-is.
+    return url;
+  }
+}
+
 const poolConfig = config.databaseUrl
-  ? { connectionString: config.databaseUrl, ssl: sslConfig, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 }
+  ? {
+      connectionString: sanitiseDatabaseUrl(config.databaseUrl),
+      ssl: sslConfig,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    }
   : { ...config.db, ssl: sslConfig };
 
 const pool = new Pool(poolConfig);
