@@ -1,6 +1,7 @@
 'use strict';
 const { Markup } = require('telegraf');
 const { pool } = require('../../db');
+const { withHomeButton } = require('../middleware/menu');
 
 async function handleWallets(ctx) {
   const { rows } = await pool.query(
@@ -12,46 +13,56 @@ async function handleWallets(ctx) {
   );
 
   if (!rows.length) {
-    return ctx.reply(
-      '💰 <b>Payment Wallets</b>\n\nNo wallets configured yet.',
-      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('➕ Add Wallet', 'wallet_add')]]) }
-    );
+    const msg      = `💰 <b>Payment Wallets</b>\n\nNo wallets configured yet.\nAdd your first wallet to start accepting payments.`;
+    const keyboard = withHomeButton([[Markup.button.callback('➕  Add Wallet', 'wallet_add')]]);
+    if (ctx.callbackQuery) {
+      return ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
+        ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
+      );
+    }
+    return ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
   }
 
   const lines = rows.map((w, i) => {
     const status = w.is_active ? '✅ Active' : '🔴 Disabled';
     return [
-      `<b>${i + 1}. ${w.method_name}</b>`,
-      `   Address: <code>${w.address.slice(0,10)}...${w.address.slice(-6)}</code>`,
-      `   Status:  ${status}`,
-      `   Orders:  ${w.completed_count} completed`,
+      `<b>${i + 1}. ${w.method_name}</b>  ${status}`,
+      `   <code>${w.address.slice(0, 12)}…${w.address.slice(-8)}</code>`,
+      `   ${w.completed_count} completed order(s)`,
     ].join('\n');
   }).join('\n\n');
 
-  const msg = `💰 <b>Payment Wallets</b>\n━━━━━━━━━━━━━━━━━━━━\n\n${lines}\n━━━━━━━━━━━━━━━━━━━━`;
+  const msg = [`💰 <b>Payment Wallets</b>`, `━━━━━━━━━━━━━━━━━━━━━━━━`, ``, lines, ``, `━━━━━━━━━━━━━━━━━━━━━━━━`].join('\n');
 
-  const walletBtns = rows.map(w => [
-    Markup.button.callback(w.is_active ? '⏸ Disable' : '▶️ Enable', `wallet_toggle_${w.id}`),
-    Markup.button.callback('📱 QR',    `wallet_qr_${w.id}`),
-    Markup.button.callback('🗑 Delete', `wallet_delete_${w.id}`),
+  // Per-wallet action rows
+  const walletRows = rows.map((w, i) => [
+    Markup.button.callback(w.is_active ? '⏸' : '▶️', `wallet_toggle_${w.id}`),
+    Markup.button.callback(`📱  QR #${i + 1}`,        `wallet_qr_${w.id}`),
+    Markup.button.callback(`🗑  #${i + 1}`,           `wallet_delete_${w.id}`),
   ]);
 
-  await ctx.reply(msg, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Add Wallet', 'wallet_add')],
-      [Markup.button.callback('🔄 Refresh',    'wallets_list')],
-      ...walletBtns,
-    ]),
-  });
+  const keyboard = withHomeButton([
+    [
+      Markup.button.callback('➕  Add Wallet', 'wallet_add'),
+      Markup.button.callback('🔄  Refresh',    'nav_wallets'),
+    ],
+    ...walletRows,
+  ]);
+
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
+      ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
+    );
+  } else {
+    await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
+  }
 }
 
 async function handleWalletToggle(ctx, walletId) {
   const { rows } = await pool.query(`SELECT * FROM payment_wallets WHERE id=$1`, [walletId]);
   if (!rows.length) return ctx.answerCbQuery('Wallet not found');
 
-  const wallet   = rows[0];
-  const newState = !wallet.is_active;
+  const newState = !rows[0].is_active;
   await pool.query(`UPDATE payment_wallets SET is_active=$1 WHERE id=$2`, [newState, walletId]);
   await ctx.answerCbQuery(newState ? '✅ Wallet enabled' : '🔴 Wallet disabled');
   return handleWallets(ctx);
@@ -66,7 +77,6 @@ async function handleWalletQR(ctx, walletId) {
 
   const { generateQR } = require('../../utils/qr');
   const qrBuffer = await generateQR(rows[0].address);
-
   await ctx.replyWithPhoto(
     { source: qrBuffer },
     { caption: `📱 <b>${rows[0].name}</b>\n<code>${rows[0].address}</code>`, parse_mode: 'HTML' }
@@ -82,33 +92,28 @@ async function handleWalletDelete(ctx, walletId) {
   if (!rows.length) return ctx.answerCbQuery('Wallet not found');
 
   const wallet = rows[0];
-
-  // Check for pending orders
   const { rows: pending } = await pool.query(
     `SELECT COUNT(*) AS cnt FROM orders WHERE payment_address=$1 AND status='waiting_payment'`,
     [wallet.address]
   );
 
   if (parseInt(pending[0].cnt, 10) > 0) {
-    await ctx.answerCbQuery('🚫 Cannot delete — pending orders exist');
-    return ctx.reply(
-      `🚫 <b>Cannot Delete Wallet</b>\n\nThis wallet has <b>${pending[0].cnt} pending order(s)</b>.\nWait for them to complete or expire first.`,
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[Markup.button.callback('📋 View Pending', 'orders_list')]]),
-      }
-    );
+    await ctx.answerCbQuery('🚫 Pending orders exist');
+    const msg = `🚫 <b>Cannot Delete Wallet</b>\n\nThis wallet has <b>${pending[0].cnt} pending order(s)</b>.\nWait for them to complete or expire first.`;
+    return ctx.reply(msg, {
+      parse_mode: 'HTML',
+      ...withHomeButton([[Markup.button.callback('📋  View Pending Orders', 'nav_orders')]]),
+    });
   }
 
-  // Confirm delete
   await ctx.answerCbQuery();
   await ctx.reply(
-    `⚠️ <b>Confirm Delete</b>\n\n${wallet.name}\n<code>${wallet.address}</code>\n\nThis cannot be undone.`,
+    `⚠️ <b>Confirm Delete</b>\n\n${wallet.method_name}\n<code>${wallet.address}</code>\n\nThis action cannot be undone.`,
     {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('✅ Yes, Delete', `wallet_confirm_delete_${walletId}`)],
-        [Markup.button.callback('❌ Cancel',       'wallets_list')],
+        [Markup.button.callback('✅  Yes, Delete', `wallet_confirm_delete_${walletId}`)],
+        [Markup.button.callback('❌  Cancel',       'nav_wallets')],
       ]),
     }
   );
