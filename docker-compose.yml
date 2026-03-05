@@ -1,0 +1,84 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${PGDATABASE:-flashexchange}
+      POSTGRES_USER:     ${PGUSER:-flashuser}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-changeme}
+      PGDATA:            /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-flashuser} -d ${PGDATABASE:-flashexchange}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - internal
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV:    production
+      PORT:        3000
+      PGHOST:      postgres
+      PGPORT:      5432
+      PGDATABASE:  ${PGDATABASE:-flashexchange}
+      PGUSER:      ${PGUSER:-flashuser}
+      PGPASSWORD:  ${PGPASSWORD:-changeme}
+      # ── Fill these in Coolify environment variables panel ──
+      TELEGRAM_BOT_TOKEN:              ${TELEGRAM_BOT_TOKEN}
+      BOOTSTRAP_ADMIN_TELEGRAM_ID:     ${BOOTSTRAP_ADMIN_TELEGRAM_ID}
+      DISTRIBUTION_WALLET_ADDRESS:     ${DISTRIBUTION_WALLET_ADDRESS}
+      DISTRIBUTION_WALLET_PRIVATE_KEY: ${DISTRIBUTION_WALLET_PRIVATE_KEY}
+      TOKEN_CONTRACT_ADDRESS:          ${TOKEN_CONTRACT_ADDRESS}
+      TOKEN_DECIMALS:                  ${TOKEN_DECIMALS:-18}
+      TOKEN_SYMBOL:                    ${TOKEN_SYMBOL:-FLASH}
+      TOKEN_NETWORK:                   ${TOKEN_NETWORK:-bsc}
+      BSC_RPC_URL:          ${BSC_RPC_URL:-https://bsc-dataseed.binance.org/}
+      BSC_RPC_URL_FALLBACK: ${BSC_RPC_URL_FALLBACK:-https://bsc-dataseed1.defibit.io/}
+      ETH_RPC_URL:          ${ETH_RPC_URL:-https://cloudflare-eth.com}
+      ETH_RPC_URL_FALLBACK: ${ETH_RPC_URL_FALLBACK:-https://rpc.ankr.com/eth}
+      TRONGRID_API_KEY:     ${TRONGRID_API_KEY:-}
+      USDT_BEP20_CONTRACT:  ${USDT_BEP20_CONTRACT:-0x55d398326f99059ff775485246999027b3197955}
+      USDT_ERC20_CONTRACT:  ${USDT_ERC20_CONTRACT:-0xdAC17F958D2ee523a2206206994597C13D831ec7}
+      USDT_TRC20_CONTRACT:  ${USDT_TRC20_CONTRACT:-TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t}
+      USDT_BEP20_DECIMALS:  ${USDT_BEP20_DECIMALS:-18}
+      USDT_ERC20_DECIMALS:  ${USDT_ERC20_DECIMALS:-6}
+      USDT_TRC20_DECIMALS:  ${USDT_TRC20_DECIMALS:-6}
+      LOW_GAS_THRESHOLD_BNB: ${LOW_GAS_THRESHOLD_BNB:-0.05}
+      LOW_GAS_THRESHOLD_ETH: ${LOW_GAS_THRESHOLD_ETH:-0.01}
+      LOW_TOKEN_THRESHOLD:   ${LOW_TOKEN_THRESHOLD:-10000}
+      COINGECKO_API_KEY:     ${COINGECKO_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+    networks:
+      - internal
+      - external
+    dns: [8.8.8.8, 1.1.1.1]
+
+networks:
+  internal:
+    driver: bridge
+  external:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
