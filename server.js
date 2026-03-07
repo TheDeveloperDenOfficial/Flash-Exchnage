@@ -20,6 +20,7 @@ const orderRoutes  = require('./src/api/routes/orders');
 const priceUpdater    = require('./src/services/price-updater');
 const scanner         = require('./src/services/blockchain-scanner');
 const matchingEngine  = require('./src/services/matching-engine');
+const expiryEngine    = require('./src/services/expiry-engine');
 const { checkBalances } = require('./src/services/token-sender');
 
 // Bot
@@ -105,7 +106,10 @@ async function start() {
   // 5. Matching engine
   matchingEngine.start();
 
-  // 6. Blockchain scanner (calls matching engine after each cycle)
+  // 6. Expiry engine (expires unpaid orders + cleans up old records)
+  expiryEngine.start();
+
+  // 7. Blockchain scanner (calls matching engine after each cycle)
   await scanner.start();
 
   // 7. Initial balance check
