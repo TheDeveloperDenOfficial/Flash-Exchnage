@@ -10,19 +10,38 @@ const TOTAL_SUPPLY  = 1_000_000_000_000; // 1T
 const TIMEOUT_MS    = 6000;
 const ERC20_ABI     = ['function balanceOf(address owner) view returns (uint256)'];
 
-// ── Provider cache ────────────────────────────────────────────
-let _bsc = null, _eth = null;
-const bscProv = () => { if (!_bsc) _bsc = new ethers.providers.JsonRpcProvider(config.bscRpcUrl); return _bsc; };
-const ethProv = () => { if (!_eth) _eth = new ethers.providers.JsonRpcProvider(config.ethRpcUrl); return _eth; };
+// ── Provider cache (primary + fallback) ──────────────────────
+let _bscPrimary = null, _bscFallback = null;
+let _ethPrimary = null, _ethFallback = null;
+
+const bscProvPrimary  = () => { if (!_bscPrimary)  _bscPrimary  = new ethers.providers.JsonRpcProvider(config.bscRpcUrl);         return _bscPrimary; };
+const bscProvFallback = () => { if (!_bscFallback) _bscFallback = new ethers.providers.JsonRpcProvider(config.bscRpcUrlFallback); return _bscFallback; };
+const ethProvPrimary  = () => { if (!_ethPrimary)  _ethPrimary  = new ethers.providers.JsonRpcProvider(config.ethRpcUrl);         return _ethPrimary; };
+const ethProvFallback = () => { if (!_ethFallback) _ethFallback = new ethers.providers.JsonRpcProvider(config.ethRpcUrlFallback); return _ethFallback; };
 
 const withTimeout = (p) => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('timeout')), TIMEOUT_MS))]);
+
+// Try primary provider, fall back automatically on failure
+async function withFallback(primaryFn, fallbackFn) {
+  try {
+    return await withTimeout(primaryFn());
+  } catch {
+    return await withTimeout(fallbackFn());
+  }
+}
 
 // ── Network health ────────────────────────────────────────────
 async function checkHealth() {
   const h = { bsc: false, eth: false, tron: false };
   await Promise.allSettled([
-    withTimeout(bscProv().getBlockNumber()).then(() => { h.bsc = true; }),
-    withTimeout(ethProv().getBlockNumber()).then(() => { h.eth = true; }),
+    withFallback(
+      () => bscProvPrimary().getBlockNumber(),
+      () => bscProvFallback().getBlockNumber()
+    ).then(() => { h.bsc = true; }),
+    withFallback(
+      () => ethProvPrimary().getBlockNumber(),
+      () => ethProvFallback().getBlockNumber()
+    ).then(() => { h.eth = true; }),
     withTimeout(axios.post('https://api.trongrid.io/wallet/getnowblock', {}, {
       timeout: TIMEOUT_MS,
       headers: config.trongridApiKey ? { 'TRON-PRO-API-KEY': config.trongridApiKey } : {},
@@ -31,26 +50,34 @@ async function checkHealth() {
   return h;
 }
 
-// ── EVM wallet balances ───────────────────────────────────────
+// ── EVM wallet balances (with fallback) ───────────────────────
 async function getEvmBal(address, network) {
-  try {
-    const prov      = network === 'bsc' ? bscProv() : ethProv();
-    const usdtAddr  = network === 'bsc' ? config.usdtBep20Contract : config.usdtErc20Contract;
-    const usdtDec   = config.usdtDecimals[network];
-    const nativeSym = network === 'bsc' ? 'BNB' : 'ETH';
+  const usdtAddr  = network === 'bsc' ? config.usdtBep20Contract : config.usdtErc20Contract;
+  const usdtDec   = config.usdtDecimals[network];
+  const nativeSym = network === 'bsc' ? 'BNB' : 'ETH';
 
-    const [nativeWei, usdtRaw] = await withTimeout(Promise.all([
+  const tryFetch = async (prov) => {
+    const [nativeWei, usdtRaw] = await Promise.all([
       prov.getBalance(address),
       new ethers.Contract(usdtAddr, ERC20_ABI, prov).balanceOf(address),
-    ]));
-
+    ]);
     return {
       usdt:   parseFloat(ethers.utils.formatUnits(usdtRaw, usdtDec)),
       native: parseFloat(ethers.utils.formatEther(nativeWei)),
       nativeSym,
+      error: false,
     };
+  };
+
+  // Try primary, then fallback
+  try {
+    return await withTimeout(tryFetch(network === 'bsc' ? bscProvPrimary() : ethProvPrimary()));
   } catch {
-    return { usdt: null, native: null, nativeSym: network === 'bsc' ? 'BNB' : 'ETH' };
+    try {
+      return await withTimeout(tryFetch(network === 'bsc' ? bscProvFallback() : ethProvFallback()));
+    } catch {
+      return { usdt: null, native: null, nativeSym, error: true };
+    }
   }
 }
 
@@ -70,27 +97,36 @@ async function getTronBal(address) {
     const usdt = usdtEntry
       ? parseFloat(usdtEntry.balance) / Math.pow(10, config.usdtDecimals.tron)
       : 0;
-    return { usdt, native: trx, nativeSym: 'TRX' };
+    return { usdt, native: trx, nativeSym: 'TRX', error: false };
   } catch {
-    return { usdt: null, native: null, nativeSym: 'TRX' };
+    return { usdt: null, native: null, nativeSym: 'TRX', error: true };
   }
 }
 
-// ── Distribution wallet ───────────────────────────────────────
+// ── Distribution wallet (with fallback) ───────────────────────
 async function getDistBal() {
-  try {
-    const addr = config.distributionWalletAddress;
-    const prov = bscProv();
-    const [nativeWei, flashRaw] = await withTimeout(Promise.all([
+  const addr = config.distributionWalletAddress;
+
+  const tryFetch = async (prov) => {
+    const [nativeWei, flashRaw] = await Promise.all([
       prov.getBalance(addr),
       new ethers.Contract(config.tokenContractAddress, ERC20_ABI, prov).balanceOf(addr),
-    ]));
+    ]);
     return {
       bnb:   parseFloat(ethers.utils.formatEther(nativeWei)),
       flash: parseFloat(ethers.utils.formatUnits(flashRaw, config.tokenDecimals)),
+      error: false,
     };
+  };
+
+  try {
+    return await withTimeout(tryFetch(bscProvPrimary()));
   } catch {
-    return { bnb: null, flash: null };
+    try {
+      return await withTimeout(tryFetch(bscProvFallback()));
+    } catch {
+      return { bnb: null, flash: null, error: true };
+    }
   }
 }
 
@@ -106,6 +142,11 @@ function fmtFlash(v) {
   if (v >= 1e3)  return (v / 1e3).toFixed(1) + 'K';
   return Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
+
+// Show ⚠️ if fetch failed, value otherwise
+const fmtVal  = (v, fmt) => v === null ? '⚠️' : fmt(v);
+const fmtUsdt = (bal)    => bal.error ? '⚠️ USDT' : `${n2(bal.usdt)} USDT`;
+const fmtNative = (bal)  => bal.error ? `⚠️ ${bal.nativeSym}` : `${bal.nativeSym}: ${n4(bal.native)}`;
 
 function shortAddr(addr) {
   if (!addr) return '—';
@@ -186,7 +227,7 @@ async function buildDashboard() {
   const uniqueEntries = Object.values(networkMap).flatMap(addrs => Object.values(addrs));
   const balances = await Promise.all(
     uniqueEntries.map(e => {
-      if (!e.is_active) return Promise.resolve({ usdt: null, native: null, nativeSym: e.network === 'tron' ? 'TRX' : e.network === 'eth' ? 'ETH' : 'BNB' });
+      if (!e.is_active) return Promise.resolve({ usdt: null, native: null, nativeSym: e.network === 'tron' ? 'TRX' : e.network === 'eth' ? 'ETH' : 'BNB', error: false });
       if (e.network === 'tron') return getTronBal(e.address);
       return getEvmBal(e.address, e.network);
     })
@@ -201,7 +242,6 @@ async function buildDashboard() {
   const netDot   = (ok) => ok ? '🟢' : '🔴';
   const netEmoji = { bsc: '🔶', eth: '💎', tron: '🔴' };
   const netLabel = { bsc: 'BSC', eth: 'ETH', tron: 'TRON' };
-  const nativeSym = { bsc: 'BNB', eth: 'ETH', tron: 'TRX' };
 
   // ── Compose message ───────────────────────────────────────
   const L = [];
@@ -236,20 +276,21 @@ async function buildDashboard() {
           L.push(`${netEmoji[net]} <b>${netLabel[net]}</b>  |  <code>${shortAddr(addr)}</code>  |  <i>disabled</i>`);
           continue;
         }
-        const usdtStr   = bal.usdt   !== null ? `${n2(bal.usdt)} USDT`            : '— USDT';
-        const nativeStr = bal.native !== null ? `${nativeSym[net]}: ${n4(bal.native)}` : `${nativeSym[net]}: —`;
-        L.push(`${netEmoji[net]} <b>${netLabel[net]}</b>  |  <code>${shortAddr(addr)}</code>  |  💵 ${usdtStr}  |  ${nativeStr}`);
+        L.push(`${netEmoji[net]} <b>${netLabel[net]}</b>  |  <code>${shortAddr(addr)}</code>  |  💵 ${fmtUsdt(bal)}  |  ${fmtNative(bal)}`);
       }
     }
   }
 
   // Distribution wallet
-  const flashWarn = distBal.flash !== null && distBal.flash < config.lowTokenThreshold;
-  const bnbWarn   = distBal.bnb   !== null && distBal.bnb   < (config.lowGasThresholdBnb || 0.01);
+  const flashWarn = !distBal.error && distBal.flash !== null && distBal.flash < config.lowTokenThreshold;
+  const bnbWarn   = !distBal.error && distBal.bnb   !== null && distBal.bnb   < (config.lowGasThresholdBnb || 0.01);
+
+  const flashStr = distBal.error ? '⚠️' : `${fmtFlash(distBal.flash)}${flashWarn ? ' ⚠️ LOW' : ''}`;
+  const bnbStr   = distBal.error ? '⚠️' : `${n4(distBal.bnb)}${bnbWarn ? ' ⚠️ LOW' : ''}`;
 
   L.push(``);
   L.push(`🏦 <b>Distribution Wallet</b>  |  <code>${shortAddr(config.distributionWalletAddress)}</code>`);
-  L.push(`⚡ <b>Flash Balance</b>  |  ${fmtFlash(distBal.flash)}${flashWarn ? '  ⚠️ LOW' : ''}  |  🟡 <b>BNB Balance</b>  |  ${n4(distBal.bnb)}${bnbWarn ? '  ⚠️ LOW' : ''}`);
+  L.push(`⚡ <b>Flash Balance</b>  |  ${flashStr}  |  🟡 <b>BNB Gas</b>  |  ${bnbStr}`);
 
   // Today
   const todayTotal   = parseInt(today.total,   10) || 0;
