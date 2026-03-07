@@ -102,16 +102,13 @@ router.post('/', async (req, res) => {
     const order = rows[0];
 
     // Generate QR for frontend
-    const qrDataUrl = await generateQRDataUrl(paymentAddress);
+    const qrDataUrl = await generateQRDataUrl(paymentAddress, network);
 
     logger.info('Order created', {
       orderId: order.id, network, coin: coinSymbol, qty, usdtAmount, uniqueAmount, fingerprint,
     });
 
     // Notify admins of new order
-    const notify = require('../../bot/notify');
-    notify.newOrder({ id: order.id, token_amount: qty, usdt_amount: usdtAmount, payment_method_code, receiving_wallet });
-
     return res.status(201).json({
       orderId:            order.id,
       paymentAddress,
