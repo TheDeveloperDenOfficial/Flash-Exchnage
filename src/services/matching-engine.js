@@ -31,11 +31,12 @@ async function matchTransaction(txn) {
     );
 
     if (!orders.length) {
-      // No match — leave as unmatched, notify admin
+      // No match — leave as unmatched, notify admin via Container 2
       logger.warn('Unmatched transaction — flagged for admin review', {
         txHash: txn.tx_hash, network: txn.network, coin: txn.coin_symbol, amount: txn.amount,
       });
-      // Notification sent from scanner after it calls this function
+      const notify = require('../bot/notify');
+      notify.unmatchedTransaction(txn);
       return { matched: false };
     }
 
@@ -80,7 +81,7 @@ async function matchTransaction(txn) {
           // Notify via bot after result
           const notify = require('../bot/notify');
           if (result.success) {
-            notify.orderCompleted({ ...order, tx_hash_in: order.tx_hash_in }, result.txHash);
+            notify.orderCompleted({ ...order, tx_hash_in: txn.tx_hash }, result.txHash);
           } else {
             notify.orderFailed(order, result.error);
           }
