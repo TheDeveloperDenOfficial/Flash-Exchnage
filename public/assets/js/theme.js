@@ -125,7 +125,7 @@
 
     // Sync native select options
     nativeSel.innerHTML = methods.length
-      ? methods.map(function (m) {
+      ? '<option value="">Select Payment Method</option>' + methods.map(function (m) {
           return '<option value="' + m.code + '">' + m.name + '</option>';
         }).join('')
       : '<option value="">No payment methods available</option>';
@@ -173,7 +173,7 @@
 
     var trigLabel = document.createElement('span');
     trigLabel.style.cssText = 'flex:1;font-size:14px;color:#999;line-height:1.4;font-family:inherit;';
-    trigLabel.textContent   = 'Choose your payment currency';
+    trigLabel.textContent   = 'Select Payment Method';
 
     var trigArrow = document.createElement('span');
     trigArrow.style.cssText = [
@@ -310,8 +310,7 @@
       });
     }
 
-    // Auto-select first method on load
-    selectMethod(methods[0]);
+    // No auto-select — user must choose a payment method
 
     // Toggle trigger
     trigger.addEventListener('click', function (e) {
