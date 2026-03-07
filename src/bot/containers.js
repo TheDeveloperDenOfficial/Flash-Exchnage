@@ -1,408 +1,207 @@
 'use strict';
-const { pool } = require('../db');
-const logger   = require('../utils/logger').child({ service: 'containers' });
+const express = require('express');
+const { pool, getSetting } = require('../../db');
+const { getPrice, arePricesFresh } = require('../../services/price-updater');
+const { generateVerifiedUniqueAmount } = require('../../utils/uniqueAmount');
+const { validateBep20Wallet, isValidTronAddress } = require('../../utils/validators');
+const { generateQRDataUrl } = require('../../utils/qr');
+const logger = require('../../utils/logger').child({ service: 'orders-api' });
 
-let _bot = null;
-function setBot(bot) { _bot = bot; }
+const router = express.Router();
 
-const MAX_ALERTS = 10;
-const MAX_ORDERS = 10;
-
-// ── DB helpers ────────────────────────────────────────────────
-
-async function getAdmins() {
-  const { rows } = await pool.query(`SELECT telegram_id FROM admins WHERE is_active=true`);
-  return rows.map(r => r.telegram_id);
-}
-
-async function getContainer(telegramId) {
-  const { rows } = await pool.query(
-    `SELECT * FROM admin_containers WHERE telegram_id=$1`, [telegramId]
-  );
-  if (rows.length) return rows[0];
-  // Bootstrap row if missing
-  await pool.query(
-    `INSERT INTO admin_containers (telegram_id) VALUES ($1) ON CONFLICT DO NOTHING`, [telegramId]
-  );
-  return { telegram_id: telegramId, menu_msg_id: null, alerts_msg_id: null, orders_msg_id: null, alerts_log: '[]', orders_log: '[]' };
-}
-
-async function saveContainer(telegramId, fields) {
-  const sets   = Object.keys(fields).map((k, i) => `${k}=$${i + 2}`).join(', ');
-  const values = Object.values(fields);
-  await pool.query(
-    `INSERT INTO admin_containers (telegram_id, ${Object.keys(fields).join(', ')}, updated_at)
-     VALUES ($1, ${values.map((_, i) => `$${i + 2}`).join(', ')}, NOW())
-     ON CONFLICT (telegram_id) DO UPDATE SET ${sets}, updated_at=NOW()`,
-    [telegramId, ...values]
-  );
-}
-
-// ── Formatters ────────────────────────────────────────────────
-
-function timeAgo(iso) {
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60)    return `${s}s ago`;
-  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
-
-function fmtTimestamp() {
-  return new Date().toUTCString().replace(/:\d\d GMT$/, ' UTC');
-}
-
-// ── Container 2: Alerts ───────────────────────────────────────
-
-function buildAlertsMsg(log) {
-  const lines = [`🚨 <b>Alerts</b>  <i>(${log.length} unresolved)</i>`, ``];
-
-  if (!log.length) {
-    lines.push(`✅ <i>All clear — no active alerts</i>`);
-  } else {
-    for (const entry of log) {
-      lines.push(entry.text);
-      lines.push(`<i>${timeAgo(entry.ts)}</i>`);
-      lines.push(``);
-    }
-  }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🕐 <i>${fmtTimestamp()}</i>`);
-  return lines.join('\n');
-}
-
-// ── Container 3: Live Orders ──────────────────────────────────
-
-function buildOrdersMsg(log) {
-  const lines = [`💰 <b>Live Orders</b>`, ``];
-
-  if (!log.length) {
-    lines.push(`📭 <i>No recent order activity</i>`);
-  } else {
-    for (const entry of log) {
-      lines.push(entry.text);
-      lines.push(`<i>${timeAgo(entry.ts)}</i>`);
-      lines.push(``);
-    }
-  }
-
-  lines.push(`━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🕐 <i>${fmtTimestamp()}</i>`);
-  return lines.join('\n');
-}
-
-// ── Safe send/edit helpers ────────────────────────────────────
-
-async function safeSend(chatId, text) {
+// ── POST /api/order ───────────────────────────────────────────
+router.post('/', async (req, res) => {
   try {
-    const msg = await _bot.telegram.sendMessage(chatId, text, { parse_mode: 'HTML' });
-    return msg.message_id;
+    const { quantity, payment_method_code, receiving_wallet } = req.body;
+
+    // ── Validation ──────────────────────────────────────
+    const errors = [];
+    const qty = parseInt(quantity, 10);
+
+    const [minQtyStr, tokenPriceStr, expiryStr] = await Promise.all([
+      getSetting('min_order_qty'),
+      getSetting('token_price_usd'),
+      getSetting('order_expiry_minutes'),
+    ]);
+    const minQty       = parseInt(minQtyStr, 10) || 100;
+    const tokenPrice   = parseFloat(tokenPriceStr) || 0.02;
+    const expiryMins   = parseInt(expiryStr, 10) || 30;
+
+    if (!qty || isNaN(qty) || qty < minQty) {
+      errors.push(`Minimum quantity is ${minQty} tokens`);
+    }
+    if (!payment_method_code) {
+      errors.push('Payment method is required');
+    }
+    if (!receiving_wallet) {
+      errors.push('Receiving wallet is required');
+    }
+    if (errors.length) return res.status(400).json({ error: errors.join('. ') });
+
+    // ── Validate wallet ─────────────────────────────────
+    // Determine network from payment method before wallet validation
+    const { rows: pmCheckRows } = await pool.query(
+      `SELECT network FROM payment_methods WHERE code = $1 AND is_active = true`,
+      [payment_method_code]
+    );
+    const pmNetwork = pmCheckRows[0]?.network || '';
+
+    if (pmNetwork === 'tron') {
+      if (!isValidTronAddress(receiving_wallet.trim())) {
+        return res.status(400).json({ error: 'Invalid TRON wallet address. Must start with T and be 34 characters.' });
+      }
+    } else {
+      const walletCheck = await validateBep20Wallet(receiving_wallet);
+      if (!walletCheck.valid) {
+        return res.status(400).json({ error: walletCheck.reason });
+      }
+    }
+
+    // ── Payment method + wallet ─────────────────────────
+    const { rows: methodRows } = await pool.query(
+      `SELECT pm.*, pw.address AS payment_address
+       FROM payment_methods pm
+       JOIN payment_wallets pw ON pm.code = pw.payment_method_code
+       WHERE pm.code = $1 AND pm.is_active = true AND pw.is_active = true`,
+      [payment_method_code]
+    );
+
+    if (!methodRows.length) {
+      return res.status(400).json({ error: 'Selected payment method is not available' });
+    }
+
+    const method         = methodRows[0];
+    const paymentAddress = method.payment_address;
+    const network        = method.network;
+    const coinSymbol     = method.coin_symbol;
+    const isUsdt         = coinSymbol === 'USDT';
+
+    // ── Price ───────────────────────────────────────────
+    if (!isUsdt && !arePricesFresh()) {
+      return res.status(503).json({ error: 'Live price data is temporarily unavailable. Please try again in a moment.' });
+    }
+
+    const coinPriceUsd = isUsdt ? 1.0 : getPrice(coinSymbol);
+    if (coinPriceUsd <= 0) {
+      return res.status(503).json({ error: `Price for ${coinSymbol} is not available yet` });
+    }
+
+    // ── Calculate amounts ───────────────────────────────
+    const usdtAmount   = qty * tokenPrice;
+    const cryptoAmount = usdtAmount / coinPriceUsd;
+    const { uniqueAmount, fingerprint } = await generateVerifiedUniqueAmount(
+      pool, cryptoAmount, network, coinSymbol
+    );
+
+    const expiresAt = new Date(Date.now() + expiryMins * 60 * 1000);
+
+    // ── Create order ────────────────────────────────────
+    const { rows } = await pool.query(
+      `INSERT INTO orders
+         (payment_method_code, network, coin_symbol,
+          usdt_amount, token_amount, token_price_snapshot,
+          crypto_amount, unique_crypto_amount, coin_price_usd_snapshot,
+          fingerprint, payment_address, receiving_wallet, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING id, expires_at, created_at`,
+      [
+        payment_method_code, network, coinSymbol,
+        usdtAmount.toFixed(8), String(qty), tokenPrice.toFixed(8),
+        cryptoAmount.toFixed(8), uniqueAmount.toFixed(8), coinPriceUsd.toFixed(8),
+        fingerprint, paymentAddress, receiving_wallet.trim(), expiresAt.toISOString(),
+      ]
+    );
+
+    const order = rows[0];
+
+    // Generate QR for frontend
+    const qrDataUrl = await generateQRDataUrl(paymentAddress, network);
+
+    logger.info('Order created', {
+      orderId: order.id, network, coin: coinSymbol, qty, usdtAmount, uniqueAmount, fingerprint,
+    });
+
+    // Notify admins of new order
+    return res.status(201).json({
+      orderId:            order.id,
+      paymentAddress,
+      qrDataUrl,
+      uniqueCryptoAmount: uniqueAmount.toFixed(8),
+      coinSymbol,
+      network,
+      tokenAmount:        qty,
+      usdtAmount:         parseFloat(usdtAmount.toFixed(2)),
+      expiresAt:          order.expires_at,
+      createdAt:          order.created_at,
+      expiryMinutes:      expiryMins,
+    });
+
   } catch (err) {
-    logger.warn(`[containers] safeSend failed for ${chatId}: ${err.message}`);
-    return null;
+    logger.error('POST /api/order error', { error: err.message });
+    return res.status(500).json({ error: 'Order creation failed. Please try again.' });
   }
-}
+});
 
-async function safeEdit(chatId, msgId, text, keyboard = null) {
-  if (!msgId) return false;
+// ── GET /api/order/:id ────────────────────────────────────────
+router.get('/:id', async (req, res) => {
   try {
-    const opts = { parse_mode: 'HTML' };
-    if (keyboard) opts.reply_markup = keyboard.reply_markup;
-    await _bot.telegram.editMessageText(chatId, msgId, null, text, opts);
-    return true;
+    const { id } = req.params;
+    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+      return res.status(400).json({ error: 'Invalid order ID' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, status, payment_method_code, network, coin_symbol,
+              usdt_amount, token_amount, unique_crypto_amount, payment_address,
+              receiving_wallet, tx_hash_in, tx_hash_out, retry_count,
+              matched_at, completed_at, expires_at, created_at
+       FROM orders WHERE id=$1`,
+      [id]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'Order not found' });
+
+    const order = rows[0];
+
+    // Auto-expire
+    if (order.status === 'waiting_payment' && new Date() > new Date(order.expires_at)) {
+      await pool.query(`UPDATE orders SET status='expired', updated_at=NOW() WHERE id=$1`, [id]);
+      order.status = 'expired';
+    }
+
+    const msRemaining = Math.max(0, new Date(order.expires_at) - Date.now());
+    const mins = Math.floor(msRemaining / 60000);
+    const secs = Math.floor((msRemaining % 60000) / 1000);
+
+    // Explorer links
+    const explorers = { bsc: 'https://bscscan.com/tx/', eth: 'https://etherscan.io/tx/', tron: 'https://tronscan.org/#/transaction/' };
+    const explorer  = explorers[order.network] || explorers.bsc;
+
+    return res.json({
+      orderId:            order.id,
+      status:             order.status,
+      paymentMethodCode:  order.payment_method_code,
+      network:            order.network,
+      coinSymbol:         order.coin_symbol,
+      usdtAmount:         parseFloat(order.usdt_amount),
+      tokenAmount:        parseFloat(order.token_amount),
+      uniqueCryptoAmount: order.unique_crypto_amount,
+      paymentAddress:     order.payment_address,
+      receivingWallet:    order.receiving_wallet,
+      txHashIn:           order.tx_hash_in  ? { hash: order.tx_hash_in,  url: explorer + order.tx_hash_in  } : null,
+      txHashOut:          order.tx_hash_out ? { hash: order.tx_hash_out, url: explorer + order.tx_hash_out } : null,
+      retryCount:         order.retry_count,
+      matchedAt:          order.matched_at,
+      completedAt:        order.completed_at,
+      expiresAt:          order.expires_at,
+      createdAt:          order.created_at,
+      timeRemaining:      { ms: msRemaining, display: `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}` },
+    });
+
   } catch (err) {
-    const desc = err.description || err.message || '';
-    if (desc.includes('message is not modified')) return true;   // already correct
-    if (desc.includes('message to edit not found') ||
-        desc.includes('MESSAGE_ID_INVALID') ||
-        desc.includes('too old')) return false;                  // needs recreate
-    logger.warn(`[containers] safeEdit failed for ${chatId}/${msgId}: ${desc}`);
-    return false;
+    logger.error('GET /api/order/:id error', { error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
-}
+});
 
-async function safeDelete(chatId, msgId) {
-  if (!msgId) return;
-  try {
-    await _bot.telegram.deleteMessage(chatId, msgId);
-  } catch { /* ignore */ }
-}
-
-// ── Clear all known messages for an admin ────────────────────
-
-async function clearAdminChat(telegramId) {
-  const c = await getContainer(telegramId);
-  // Delete all 3 containers silently
-  await Promise.all([
-    safeDelete(telegramId, c.menu_msg_id),
-    safeDelete(telegramId, c.alerts_msg_id),
-    safeDelete(telegramId, c.orders_msg_id),
-  ]);
-  await saveContainer(telegramId, {
-    menu_msg_id:   null,
-    alerts_msg_id: null,
-    orders_msg_id: null,
-    alerts_log:    '[]',
-    orders_log:    '[]',
-  });
-}
-
-// ── Startup: clear + rebuild containers for all admins ────────
-
-async function initContainers(buildMenuFn) {
-  if (!_bot) return;
-  const admins = await getAdmins();
-
-  for (const adminId of admins) {
-    try {
-      // 1. Clear old containers
-      await clearAdminChat(adminId);
-
-      // Check if there are active alerts or orders
-      const [alertsRes, ordersRes] = await Promise.all([
-        pool.query(`SELECT COUNT(*)::int AS cnt FROM wallet_transactions WHERE status='unmatched'`),
-        pool.query(`SELECT COUNT(*)::int AS cnt FROM orders WHERE status IN ('waiting_payment','matched','sending') AND expires_at > NOW()`),
-      ]);
-
-      const hasAlerts = parseInt(alertsRes.rows[0].cnt, 10) > 0;
-      const hasOrders = parseInt(ordersRes.rows[0].cnt, 10) > 0;
-
-      // 2. Send Container 2 (Alerts) if needed — appears above
-      let alertsMsgId = null;
-      if (hasAlerts) {
-        const log = await buildCurrentAlertsLog();
-        alertsMsgId = await safeSend(adminId, buildAlertsMsg(log));
-        if (alertsMsgId) {
-          await _bot.telegram.sendMessage(adminId, '​', {  // zero-width spacer
-            reply_markup: { inline_keyboard: [[{ text: '🔄 Refresh Alerts', callback_data: 'refresh_alerts' }]] }
-          }).catch(() => {});
-        }
-      }
-
-      // 3. Send Container 3 (Live Orders) if needed — appears above
-      let ordersMsgId = null;
-      if (hasOrders) {
-        const log = await buildCurrentOrdersLog();
-        ordersMsgId = await safeSend(adminId, buildOrdersMsg(log));
-        if (ordersMsgId) {
-          await _bot.telegram.sendMessage(adminId, '​', {
-            reply_markup: { inline_keyboard: [[{ text: '🔄 Refresh Orders', callback_data: 'refresh_orders' }]] }
-          }).catch(() => {});
-        }
-      }
-
-      // 4. Send Container 1 (Main Menu) — always last, closest to input
-      const { msg, keyboard } = await buildMenuFn();
-      const menuMsgId = await safeSend(adminId, msg);
-      if (menuMsgId && keyboard) {
-        try {
-          await _bot.telegram.editMessageReplyMarkup(adminId, menuMsgId, null, keyboard.reply_markup);
-        } catch { /* ignore */ }
-      }
-
-      await saveContainer(adminId, {
-        menu_msg_id:   menuMsgId,
-        alerts_msg_id: alertsMsgId,
-        orders_msg_id: ordersMsgId,
-        alerts_log:    JSON.stringify(hasAlerts ? await buildCurrentAlertsLog() : []),
-        orders_log:    JSON.stringify(hasOrders ? await buildCurrentOrdersLog() : []),
-      });
-
-      logger.info(`[containers] Initialized for admin ${adminId}`);
-    } catch (err) {
-      logger.error(`[containers] Init failed for admin ${adminId}: ${err.message}`);
-    }
-  }
-}
-
-// ── Build current alerts log from DB ─────────────────────────
-
-async function buildCurrentAlertsLog() {
-  const { rows } = await pool.query(
-    `SELECT * FROM wallet_transactions WHERE status='unmatched' ORDER BY detected_at DESC LIMIT ${MAX_ALERTS}`
-  );
-  return rows.map(t => ({
-    ts:   t.detected_at,
-    text: [
-      `🔴 <b>Unmatched TX</b>  |  ${t.network.toUpperCase()}  |  ${t.coin_symbol}`,
-      `   Amount: <b>${t.amount}</b>  |  From: <code>${t.from_address.slice(0, 14)}…</code>`,
-    ].join('\n'),
-  }));
-}
-
-// ── Build current orders log from DB ─────────────────────────
-
-async function buildCurrentOrdersLog() {
-  const { rows } = await pool.query(
-    `SELECT * FROM orders
-     WHERE status IN ('waiting_payment','matched','sending','completed','failed')
-     ORDER BY updated_at DESC LIMIT ${MAX_ORDERS}`
-  );
-  return rows.map(o => ({
-    ts:   o.updated_at,
-    text: formatOrderEntry(o),
-  }));
-}
-
-function formatOrderEntry(order) {
-  const statusMap = {
-    waiting_payment: '⏳ Awaiting Payment',
-    matched:         '🔍 Matched',
-    sending:         '📤 Sending Tokens',
-    completed:       '✅ Completed',
-    failed:          '❌ Failed',
-    expired:         '⏰ Expired',
-  };
-  const status = statusMap[order.status] || order.status;
-  const lines = [
-    `${status}  |  <b>${Number(order.token_amount).toLocaleString()} FLASH</b>  |  ${order.coin_symbol} (${order.network.toUpperCase()})`,
-  ];
-  if (order.tx_hash_out) lines.push(`   TX: <code>${order.tx_hash_out.slice(0, 18)}…</code>`);
-  else if (order.tx_hash_in) lines.push(`   TX in: <code>${order.tx_hash_in.slice(0, 18)}…</code>`);
-  return lines.join('\n');
-}
-
-// ── Update Container 2 (Alerts) ──────────────────────────────
-
-async function pushAlert(entry) {
-  if (!_bot) return;
-  const admins = await getAdmins();
-
-  for (const adminId of admins) {
-    try {
-      const c   = await getContainer(adminId);
-      const log = JSON.parse(c.alerts_log || '[]');
-
-      // Prepend new entry
-      log.unshift({ ts: new Date().toISOString(), text: entry });
-      if (log.length > MAX_ALERTS) log.length = MAX_ALERTS;
-
-      const text = buildAlertsMsg(log);
-
-      let msgId = c.alerts_msg_id;
-
-      // Try editing existing container
-      if (msgId) {
-        const ok = await safeEdit(adminId, msgId, text);
-        if (!ok) {
-          // Message too old or gone — delete and recreate
-          await safeDelete(adminId, msgId);
-          msgId = await safeSend(adminId, text);
-        }
-      } else {
-        // Container doesn't exist yet — create it
-        msgId = await safeSend(adminId, text);
-      }
-
-      await saveContainer(adminId, { alerts_msg_id: msgId, alerts_log: JSON.stringify(log) });
-    } catch (err) {
-      logger.warn(`[containers] pushAlert failed for ${adminId}: ${err.message}`);
-    }
-  }
-}
-
-// ── Update Container 3 (Live Orders) ─────────────────────────
-
-async function pushOrderEvent(order) {
-  if (!_bot) return;
-  const admins = await getAdmins();
-  const entry  = { ts: new Date().toISOString(), text: formatOrderEntry(order) };
-
-  for (const adminId of admins) {
-    try {
-      const c   = await getContainer(adminId);
-      let   log = JSON.parse(c.orders_log || '[]');
-
-      // Update existing entry for same order, or prepend new
-      const existingIdx = log.findIndex(e => e.orderId === order.id);
-      if (existingIdx >= 0) {
-        log[existingIdx] = { ...entry, orderId: order.id };
-        // Move to top
-        const [updated] = log.splice(existingIdx, 1);
-        log.unshift(updated);
-      } else {
-        log.unshift({ ...entry, orderId: order.id });
-      }
-      if (log.length > MAX_ORDERS) log.length = MAX_ORDERS;
-
-      const text = buildOrdersMsg(log);
-
-      let msgId = c.orders_msg_id;
-
-      if (msgId) {
-        const ok = await safeEdit(adminId, msgId, text);
-        if (!ok) {
-          await safeDelete(adminId, msgId);
-          msgId = await safeSend(adminId, text);
-        }
-      } else {
-        msgId = await safeSend(adminId, text);
-      }
-
-      await saveContainer(adminId, { orders_msg_id: msgId, orders_log: JSON.stringify(log) });
-    } catch (err) {
-      logger.warn(`[containers] pushOrderEvent failed for ${adminId}: ${err.message}`);
-    }
-  }
-}
-
-// ── Refresh handlers (called from bot actions) ────────────────
-
-async function refreshAlerts(ctx) {
-  const adminId = ctx.from.id;
-  const c       = await getContainer(adminId);
-  const log     = JSON.parse(c.alerts_log || '[]');
-  const text    = buildAlertsMsg(log);
-
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML' });
-  } catch { /* already up to date */ }
-  await ctx.answerCbQuery('✅ Alerts refreshed');
-}
-
-async function refreshOrders(ctx) {
-  const adminId = ctx.from.id;
-  const c       = await getContainer(adminId);
-  const log     = JSON.parse(c.orders_log || '[]');
-  const text    = buildOrdersMsg(log);
-
-  try {
-    await ctx.editMessageText(text, { parse_mode: 'HTML' });
-  } catch { /* already up to date */ }
-  await ctx.answerCbQuery('✅ Orders refreshed');
-}
-
-// ── Update Container 1 (Main Menu) ───────────────────────────
-
-async function updateMenu(adminId, msg, keyboard) {
-  const c = await getContainer(adminId);
-  let msgId = c.menu_msg_id;
-
-  const opts = { parse_mode: 'HTML', ...(keyboard || {}) };
-
-  if (msgId) {
-    const ok = await safeEdit(adminId, msgId, msg, keyboard);
-    if (!ok) {
-      await safeDelete(adminId, msgId);
-      const sent = await _bot.telegram.sendMessage(adminId, msg, opts);
-      msgId = sent?.message_id || null;
-      await saveContainer(adminId, { menu_msg_id: msgId });
-    }
-  } else {
-    const sent = await _bot.telegram.sendMessage(adminId, msg, opts);
-    msgId = sent?.message_id || null;
-    await saveContainer(adminId, { menu_msg_id: msgId });
-  }
-}
-
-module.exports = {
-  setBot,
-  initContainers,
-  clearAdminChat,
-  pushAlert,
-  pushOrderEvent,
-  refreshAlerts,
-  refreshOrders,
-  updateMenu,
-};
+module.exports = router;
