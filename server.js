@@ -24,7 +24,8 @@ const expiryEngine    = require('./src/services/expiry-engine');
 const { checkBalances } = require('./src/services/token-sender');
 
 // Bot
-const { createBot } = require('./src/bot');
+const { createBot }      = require('./src/bot');
+const { buildDashboard } = require('./src/bot/handlers/home');
 
 const app = express();
 
@@ -98,6 +99,18 @@ async function start() {
     containers.setBot(bot);
     bot.launch({ dropPendingUpdates: true });
     logger.info('Telegram bot started');
+
+    // Init containers 3s after launch — allows Telegram connection to stabilize
+    setTimeout(async () => {
+      try {
+        logger.info('Initializing bot containers…');
+        await containers.initContainers(buildDashboard);
+        logger.info('Bot containers initialized');
+      } catch (err) {
+        logger.error('Container init failed', { error: err.message, stack: err.stack });
+      }
+    }, 3000);
+
     // Graceful stop
     process.once('SIGINT',  () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));
