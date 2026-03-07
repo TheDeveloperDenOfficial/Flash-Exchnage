@@ -10,7 +10,8 @@ const path       = require('path');
 const { migrate, ensureBootstrapAdmin, pool } = require('./src/db');
 const logger     = require('./src/utils/logger');
 const config     = require('./src/config');
-const notify     = require('./src/bot/notify');
+const notify      = require('./src/bot/notify');
+const containers  = require('./src/bot/containers');
 
 // Routes
 const publicRoutes = require('./src/api/routes/public');
@@ -96,6 +97,7 @@ async function start() {
   const bot = createBot();
   if (bot) {
     notify.setBot(bot);
+    containers.setBot(bot);
     bot.launch({ dropPendingUpdates: true });
     logger.info('Telegram bot started');
     // Graceful stop
