@@ -3,6 +3,7 @@ const { Markup } = require('telegraf');
 const { pool } = require('../../db');
 const { checkBalances } = require('../../services/token-sender');
 const { withHomeButton } = require('../middleware/menu');
+const { smartEdit } = require('../middleware/smartEdit');
 
 async function handleStats(ctx) {
   try {
@@ -68,26 +69,15 @@ async function handleStats(ctx) {
 
     const keyboard = withHomeButton([
       [
-        Markup.button.callback('🔄  Refresh',      'nav_stats'),
-        Markup.button.callback('📋  View Orders',  'nav_orders'),
+        Markup.button.callback('🔄  Refresh',     'nav_stats'),
+        Markup.button.callback('📋  View Orders', 'nav_orders'),
       ],
     ]);
 
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-        ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-      );
-    } else {
-      await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
-    }
+    await smartEdit(ctx, msg, { parse_mode: 'HTML', ...keyboard });
 
   } catch (err) {
-    const errMsg = `❌ Error loading stats: ${err.message}`;
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(errMsg).catch(() => ctx.reply(errMsg));
-    } else {
-      await ctx.reply(errMsg);
-    }
+    await smartEdit(ctx, `❌ Error loading stats: ${err.message}`);
   }
 }
 

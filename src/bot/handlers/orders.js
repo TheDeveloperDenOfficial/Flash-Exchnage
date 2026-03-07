@@ -3,6 +3,7 @@ const { Markup } = require('telegraf');
 const { pool } = require('../../db');
 const { sendTokensWithRetry } = require('../../services/token-sender');
 const { withHomeButton } = require('../middleware/menu');
+const { smartEdit, smartReply } = require('../middleware/smartEdit');
 
 const PAGE_SIZE = 8;
 
@@ -32,14 +33,10 @@ async function handleOrders(ctx, offset = 0) {
   const totalCount = parseInt(total[0].cnt, 10);
 
   if (!rows.length) {
-    const keyboard = withHomeButton([]);
-    const msg = `📋 <b>Orders</b>\n\nNo orders found yet.`;
-    if (ctx.callbackQuery) {
-      return ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-        ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-      );
-    }
-    return ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
+    return smartEdit(ctx, `📋 <b>Orders</b>\n\nNo orders found yet.`, {
+      parse_mode: 'HTML',
+      ...withHomeButton([]),
+    });
   }
 
   const lines = rows.map((o, i) => fmtOrder(o, offset + i)).join('\n\n');
@@ -50,12 +47,10 @@ async function handleOrders(ctx, offset = 0) {
     lines,
   ].join('\n');
 
-  // Navigation row
   const navRow = [];
-  if (offset > 0)                           navRow.push(Markup.button.callback('⬅️  Newer', `orders_page_${offset - PAGE_SIZE}`));
-  if (offset + rows.length < totalCount)    navRow.push(Markup.button.callback('➡️  Older', `orders_page_${offset + PAGE_SIZE}`));
+  if (offset > 0)                        navRow.push(Markup.button.callback('⬅️  Newer', `orders_page_${offset - PAGE_SIZE}`));
+  if (offset + rows.length < totalCount) navRow.push(Markup.button.callback('➡️  Older', `orders_page_${offset + PAGE_SIZE}`));
 
-  // Detail buttons — two per row
   const detailBtns = [];
   for (let i = 0; i < rows.length; i += 2) {
     const row = [Markup.button.callback(`👁  #${offset + i + 1}`, `order_detail_${rows[i].id}`)];
@@ -68,13 +63,7 @@ async function handleOrders(ctx, offset = 0) {
     ...detailBtns,
   ]);
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-      ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-    );
-  } else {
-    await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
-  }
+  await smartEdit(ctx, msg, { parse_mode: 'HTML', ...keyboard });
 }
 
 async function handleOrderDetail(ctx, orderId) {
@@ -118,18 +107,12 @@ async function handleOrderDetail(ctx, orderId) {
     actionRows.push([Markup.button.callback('🔁  Retry Send', `order_retry_${o.id}`)]);
   }
   actionRows.push([Markup.button.callback('🔙  Back to Orders', 'nav_orders')]);
+  actionRows.push([Markup.button.callback('🏠  Main Menu', 'nav_home')]);
 
-  const keyboard = withHomeButton(actionRows.slice(0, -1)); // withHomeButton adds its own home row
-
-  await ctx.editMessageText(msg, {
+  await smartEdit(ctx, msg, {
     parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([...actionRows, [Markup.button.callback('🏠  Main Menu', 'nav_home')]]),
-  }).catch(() =>
-    ctx.reply(msg, {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([...actionRows, [Markup.button.callback('🏠  Main Menu', 'nav_home')]]),
-    })
-  );
+    ...Markup.inlineKeyboard(actionRows),
+  });
 }
 
 async function handleOrderRetry(ctx, orderId) {
@@ -137,15 +120,19 @@ async function handleOrderRetry(ctx, orderId) {
   if (!rows.length) return ctx.answerCbQuery('Order is not in failed state');
 
   await ctx.answerCbQuery('Retrying…');
-  await ctx.reply(`🔁 Retrying token send for order <code>${orderId}</code>…`, { parse_mode: 'HTML' });
+  // Retrying is a background action — edit the current message to show progress
+  await smartEdit(ctx, `🔁 <b>Retrying token send…</b>\n\nOrder: <code>${orderId}</code>\nPlease wait…`, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([[Markup.button.callback('🏠  Main Menu', 'nav_home')]]),
+  });
 
   sendTokensWithRetry(rows[0]).then(async result => {
     if (result.success) {
-      await ctx.reply(`✅ Retry successful!\nTX: <code>${result.txHash}</code>`, { parse_mode: 'HTML' });
+      await smartReply(ctx, `✅ <b>Retry successful!</b>\nTX: <code>${result.txHash}</code>`, { parse_mode: 'HTML' });
     } else {
-      await ctx.reply(`❌ Retry failed: ${result.error}`);
+      await smartReply(ctx, `❌ <b>Retry failed:</b> ${result.error}`, { parse_mode: 'HTML' });
     }
-  }).catch(err => ctx.reply(`❌ Error: ${err.message}`));
+  }).catch(err => smartReply(ctx, `❌ Error: ${err.message}`, { parse_mode: 'HTML' }));
 }
 
 // ── Helpers ───────────────────────────────────────────────────

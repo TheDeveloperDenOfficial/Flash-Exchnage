@@ -2,6 +2,7 @@
 const { Markup } = require('telegraf');
 const { pool } = require('../../db');
 const { withHomeButton } = require('../middleware/menu');
+const { smartEdit } = require('../middleware/smartEdit');
 
 async function handleUnmatched(ctx) {
   const { rows } = await pool.query(
@@ -9,14 +10,10 @@ async function handleUnmatched(ctx) {
   );
 
   if (!rows.length) {
-    const msg      = `🔍 <b>Unmatched Transactions</b>\n\n✅ All clear — no unmatched transactions.`;
-    const keyboard = withHomeButton([]);
-    if (ctx.callbackQuery) {
-      return ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-        ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-      );
-    }
-    return ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
+    return smartEdit(ctx,
+      `🔍 <b>Unmatched Transactions</b>\n\n✅ All clear — no unmatched transactions.`,
+      { parse_mode: 'HTML', ...withHomeButton([]) }
+    );
   }
 
   const lines = rows.map((t, i) => [
@@ -34,7 +31,6 @@ async function handleUnmatched(ctx) {
     `━━━━━━━━━━━━━━━━━━━━━━━━`,
   ].join('\n');
 
-  // Two detail buttons per row
   const detailBtns = [];
   for (let i = 0; i < rows.length; i += 2) {
     const row = [Markup.button.callback(`👁  #${i + 1}`, `unmatched_detail_${rows[i].id}`)];
@@ -42,24 +38,16 @@ async function handleUnmatched(ctx) {
     detailBtns.push(row);
   }
 
-  const keyboard = withHomeButton(detailBtns);
-
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-      ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-    );
-  } else {
-    await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
-  }
+  await smartEdit(ctx, msg, { parse_mode: 'HTML', ...withHomeButton(detailBtns) });
 }
 
 async function handleUnmatchedDetail(ctx, txId) {
   const { rows } = await pool.query(`SELECT * FROM wallet_transactions WHERE id=$1`, [txId]);
   if (!rows.length) { await ctx.answerCbQuery('Transaction not found'); return; }
 
-  const t       = rows[0];
+  const t        = rows[0];
   const explorer = { bsc: 'https://bscscan.com/tx/', eth: 'https://etherscan.io/tx/', tron: 'https://tronscan.org/#/transaction/' };
-  const txUrl   = (explorer[t.network] || explorer.bsc) + t.tx_hash;
+  const txUrl    = (explorer[t.network] || explorer.bsc) + t.tx_hash;
 
   const msg = [
     `🔍 <b>Transaction Detail</b>`,
@@ -76,7 +64,7 @@ async function handleUnmatchedDetail(ctx, txId) {
   ].join('\n');
 
   await ctx.answerCbQuery();
-  await ctx.editMessageText(msg, {
+  await smartEdit(ctx, msg, {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
       [Markup.button.callback('🔗  Link to Order',  `unmatched_link_${txId}`)],
@@ -84,23 +72,10 @@ async function handleUnmatchedDetail(ctx, txId) {
         Markup.button.callback('✅  Mark Resolved', `unmatched_resolve_${txId}`),
         Markup.button.callback('💸  Mark Refunded', `unmatched_refund_${txId}`),
       ],
-      [Markup.button.callback('🔙  Back',           'nav_unmatched')],
-      [Markup.button.callback('🏠  Main Menu',      'nav_home')],
+      [Markup.button.callback('🔙  Back',      'nav_unmatched')],
+      [Markup.button.callback('🏠  Main Menu', 'nav_home')],
     ]),
-  }).catch(() =>
-    ctx.reply(msg, {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('🔗  Link to Order',  `unmatched_link_${txId}`)],
-        [
-          Markup.button.callback('✅  Mark Resolved', `unmatched_resolve_${txId}`),
-          Markup.button.callback('💸  Mark Refunded', `unmatched_refund_${txId}`),
-        ],
-        [Markup.button.callback('🔙  Back',           'nav_unmatched')],
-        [Markup.button.callback('🏠  Main Menu',      'nav_home')],
-      ]),
-    })
-  );
+  });
 }
 
 async function handleMarkResolved(ctx, txId) {

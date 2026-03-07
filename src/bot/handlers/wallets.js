@@ -2,6 +2,7 @@
 const { Markup } = require('telegraf');
 const { pool } = require('../../db');
 const { withHomeButton } = require('../middleware/menu');
+const { smartEdit, smartReply } = require('../middleware/smartEdit');
 
 async function handleWallets(ctx) {
   const { rows } = await pool.query(
@@ -13,14 +14,10 @@ async function handleWallets(ctx) {
   );
 
   if (!rows.length) {
-    const msg      = `💰 <b>Payment Wallets</b>\n\nNo wallets configured yet.\nAdd your first wallet to start accepting payments.`;
-    const keyboard = withHomeButton([[Markup.button.callback('➕  Add Wallet', 'wallet_add')]]);
-    if (ctx.callbackQuery) {
-      return ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-        ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-      );
-    }
-    return ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
+    return smartEdit(ctx,
+      `💰 <b>Payment Wallets</b>\n\nNo wallets configured yet.\nAdd your first wallet to start accepting payments.`,
+      { parse_mode: 'HTML', ...withHomeButton([[Markup.button.callback('➕  Add Wallet', 'wallet_add')]]) }
+    );
   }
 
   const lines = rows.map((w, i) => {
@@ -34,11 +31,10 @@ async function handleWallets(ctx) {
 
   const msg = [`💰 <b>Payment Wallets</b>`, `━━━━━━━━━━━━━━━━━━━━━━━━`, ``, lines, ``, `━━━━━━━━━━━━━━━━━━━━━━━━`].join('\n');
 
-  // Per-wallet action rows
   const walletRows = rows.map((w, i) => [
-    Markup.button.callback(w.is_active ? '⏸' : '▶️', `wallet_toggle_${w.id}`),
-    Markup.button.callback(`📱  QR #${i + 1}`,        `wallet_qr_${w.id}`),
-    Markup.button.callback(`🗑  #${i + 1}`,           `wallet_delete_${w.id}`),
+    Markup.button.callback(w.is_active ? '⏸  Disable' : '▶️  Enable', `wallet_toggle_${w.id}`),
+    Markup.button.callback(`📱  QR #${i + 1}`,  `wallet_qr_${w.id}`),
+    Markup.button.callback(`🗑  Del #${i + 1}`, `wallet_delete_${w.id}`),
   ]);
 
   const keyboard = withHomeButton([
@@ -49,13 +45,7 @@ async function handleWallets(ctx) {
     ...walletRows,
   ]);
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-      ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-    );
-  } else {
-    await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
-  }
+  await smartEdit(ctx, msg, { parse_mode: 'HTML', ...keyboard });
 }
 
 async function handleWalletToggle(ctx, walletId) {
@@ -65,6 +55,7 @@ async function handleWalletToggle(ctx, walletId) {
   const newState = !rows[0].is_active;
   await pool.query(`UPDATE payment_wallets SET is_active=$1 WHERE id=$2`, [newState, walletId]);
   await ctx.answerCbQuery(newState ? '✅ Wallet enabled' : '🔴 Wallet disabled');
+  // Refresh the wallets list in-place
   return handleWallets(ctx);
 }
 
@@ -77,6 +68,7 @@ async function handleWalletQR(ctx, walletId) {
 
   const { generateQR } = require('../../utils/qr');
   const qrBuffer = await generateQR(rows[0].address);
+  // QR must be a new message (it's a photo, can't edit text to photo)
   await ctx.replyWithPhoto(
     { source: qrBuffer },
     { caption: `📱 <b>${rows[0].name}</b>\n<code>${rows[0].address}</code>`, parse_mode: 'HTML' }
@@ -86,7 +78,7 @@ async function handleWalletQR(ctx, walletId) {
 
 async function handleWalletDelete(ctx, walletId) {
   const { rows } = await pool.query(
-    `SELECT pw.*, pm.name FROM payment_wallets pw JOIN payment_methods pm ON pw.payment_method_code=pm.code WHERE pw.id=$1`,
+    `SELECT pw.*, pm.name AS method_name FROM payment_wallets pw JOIN payment_methods pm ON pw.payment_method_code=pm.code WHERE pw.id=$1`,
     [walletId]
   );
   if (!rows.length) return ctx.answerCbQuery('Wallet not found');
@@ -99,15 +91,22 @@ async function handleWalletDelete(ctx, walletId) {
 
   if (parseInt(pending[0].cnt, 10) > 0) {
     await ctx.answerCbQuery('🚫 Pending orders exist');
-    const msg = `🚫 <b>Cannot Delete Wallet</b>\n\nThis wallet has <b>${pending[0].cnt} pending order(s)</b>.\nWait for them to complete or expire first.`;
-    return ctx.reply(msg, {
-      parse_mode: 'HTML',
-      ...withHomeButton([[Markup.button.callback('📋  View Pending Orders', 'nav_orders')]]),
-    });
+    // Edit the current wallets message to show the blocker — no new message
+    return smartEdit(ctx,
+      `🚫 <b>Cannot Delete Wallet</b>\n\n${wallet.method_name} has <b>${pending[0].cnt} pending order(s)</b>.\nWait for them to complete or expire, then try again.`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('📋  View Orders', 'nav_orders')],
+          [Markup.button.callback('🔙  Back to Wallets', 'nav_wallets')],
+        ]),
+      }
+    );
   }
 
   await ctx.answerCbQuery();
-  await ctx.reply(
+  // Confirmation replaces the current message — no new message
+  await smartEdit(ctx,
     `⚠️ <b>Confirm Delete</b>\n\n${wallet.method_name}\n<code>${wallet.address}</code>\n\nThis action cannot be undone.`,
     {
       parse_mode: 'HTML',
@@ -122,6 +121,7 @@ async function handleWalletDelete(ctx, walletId) {
 async function handleWalletConfirmDelete(ctx, walletId) {
   await pool.query(`DELETE FROM payment_wallets WHERE id=$1`, [walletId]);
   await ctx.answerCbQuery('🗑 Wallet deleted');
+  // Show updated wallet list in-place
   return handleWallets(ctx);
 }
 

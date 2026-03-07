@@ -1,10 +1,10 @@
 'use strict';
 const { Telegraf, Scenes, session } = require('telegraf');
-const config   = require('../config');
+const config    = require('../config');
 const adminOnly = require('./middleware/auth');
-const { MAIN_MENU_BUTTONS, WELCOME_TEXT } = require('./middleware/menu');
 
 // Handlers
+const { handleHome }     = require('./handlers/home');
 const { handleStats }    = require('./handlers/stats');
 const { handleOrders, handleOrderDetail, handleOrderRetry } = require('./handlers/orders');
 const { handleWallets, handleWalletToggle, handleWalletQR, handleWalletDelete, handleWalletConfirmDelete } = require('./handlers/wallets');
@@ -16,16 +16,6 @@ const { handleUnmatched, handleUnmatchedDetail, handleMarkResolved, handleMarkRe
 const addWalletScene     = require('./scenes/addWallet');
 const { changePriceScene, changeMinQtyScene, changeExpiryScene } = require('./scenes/settingsScenes');
 const { addAdminScene, linkTransactionScene } = require('./scenes/adminScenes');
-
-// ── Home menu helper ─────────────────────────────────────────
-async function showHome(ctx) {
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS })
-      .catch(() => ctx.reply(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS }));
-  } else {
-    await ctx.reply(WELCOME_TEXT, { parse_mode: 'HTML', ...MAIN_MENU_BUTTONS });
-  }
-}
 
 function createBot() {
   if (!config.telegramBotToken) {
@@ -48,11 +38,11 @@ function createBot() {
   bot.use(stage.middleware());
   bot.use(adminOnly);
 
-  // ── /start ──────────────────────────────────────────────────
-  bot.start(ctx => showHome(ctx));
+  // ── /start → live dashboard ─────────────────────────────────
+  bot.start(ctx => handleHome(ctx));
 
-  // ── Navigation — inline button routing ─────────────────────
-  bot.action('nav_home',      ctx => { ctx.answerCbQuery(); return showHome(ctx); });
+  // ── Navigation ──────────────────────────────────────────────
+  bot.action('nav_home',      ctx => { ctx.answerCbQuery(); return handleHome(ctx); });
   bot.action('nav_stats',     ctx => { ctx.answerCbQuery(); return handleStats(ctx); });
   bot.action('nav_orders',    ctx => { ctx.answerCbQuery(); return handleOrders(ctx, 0); });
   bot.action('nav_wallets',   ctx => { ctx.answerCbQuery(); return handleWallets(ctx); });
@@ -78,8 +68,8 @@ function createBot() {
   bot.action('settings_expiry',  ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_expiry'); });
 
   // ── Admins ──────────────────────────────────────────────────
-  bot.action('admin_add',              ctx => { ctx.answerCbQuery(); ctx.scene.enter('add_admin'); });
-  bot.action(/^admin_remove_(\d+)$/,   ctx => handleAdminRemove(ctx, ctx.match[1]));
+  bot.action('admin_add',             ctx => { ctx.answerCbQuery(); ctx.scene.enter('add_admin'); });
+  bot.action(/^admin_remove_(\d+)$/,  ctx => handleAdminRemove(ctx, ctx.match[1]));
 
   // ── Unmatched ────────────────────────────────────────────────
   bot.action(/^unmatched_detail_(\d+)$/,  ctx => handleUnmatchedDetail(ctx, parseInt(ctx.match[1], 10)));
@@ -93,7 +83,7 @@ function createBot() {
 
   // ── BotFather commands ───────────────────────────────────────
   bot.telegram.setMyCommands([
-    { command: 'start', description: '🏠 Open main menu' },
+    { command: 'start', description: '⚡ Open Flash Exchange dashboard' },
   ]).catch(() => {});
 
   // ── Error handler ────────────────────────────────────────────

@@ -2,6 +2,7 @@
 const { Markup } = require('telegraf');
 const { pool } = require('../../db');
 const { withHomeButton } = require('../middleware/menu');
+const { smartEdit } = require('../middleware/smartEdit');
 
 async function handleAdmins(ctx) {
   const { rows } = await pool.query(
@@ -32,13 +33,7 @@ async function handleAdmins(ctx) {
     ...removeBtns,
   ]);
 
-  if (ctx.callbackQuery) {
-    await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() =>
-      ctx.reply(msg, { parse_mode: 'HTML', ...keyboard })
-    );
-  } else {
-    await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
-  }
+  await smartEdit(ctx, msg, { parse_mode: 'HTML', ...keyboard });
 }
 
 async function handleAdminRemove(ctx, telegramId) {
