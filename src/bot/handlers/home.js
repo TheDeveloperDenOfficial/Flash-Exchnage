@@ -81,18 +81,16 @@ async function getDistBal() {
   try {
     const addr = config.distributionWalletAddress;
     const prov = bscProv();
-    const [nativeWei, usdtRaw, flashRaw] = await withTimeout(Promise.all([
+    const [nativeWei, flashRaw] = await withTimeout(Promise.all([
       prov.getBalance(addr),
-      new ethers.Contract(config.usdtBep20Contract, ERC20_ABI, prov).balanceOf(addr),
       new ethers.Contract(config.tokenContractAddress, ERC20_ABI, prov).balanceOf(addr),
     ]));
     return {
       bnb:   parseFloat(ethers.utils.formatEther(nativeWei)),
-      usdt:  parseFloat(ethers.utils.formatUnits(usdtRaw, config.usdtDecimals.bsc)),
       flash: parseFloat(ethers.utils.formatUnits(flashRaw, config.tokenDecimals)),
     };
   } catch {
-    return { bnb: null, usdt: null, flash: null };
+    return { bnb: null, flash: null };
   }
 }
 
@@ -173,7 +171,7 @@ async function buildDashboard() {
   const unmatched = parseInt(unmatchedRows[0].cnt, 10);
   const sym       = tokenSymbol || 'FLASH';
 
-  // Group wallets by network — deduplicate addresses per network
+  // Group wallets by network
   const wallets    = walletRows.rows;
   const networkMap = {};
   for (const w of wallets) {
@@ -200,50 +198,47 @@ async function buildDashboard() {
   const filled     = Math.round(pct / 5);
   const bar        = '▓'.repeat(filled) + '░'.repeat(20 - filled);
 
-  // ── Helpers ───────────────────────────────────────────────
   const netDot   = (ok) => ok ? '🟢' : '🔴';
   const netEmoji = { bsc: '🔶', eth: '💎', tron: '🔴' };
   const netLabel = { bsc: 'BSC', eth: 'ETH', tron: 'TRON' };
+  const nativeSym = { bsc: 'BNB', eth: 'ETH', tron: 'TRX' };
 
   // ── Compose message ───────────────────────────────────────
   const L = [];
 
   // Header
   L.push(`⚡ <b>FLASH EXCHANGE</b>`);
-  L.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
 
   // Network status
   L.push(``);
-  L.push(`🌐 <b>Network Status</b>`);
-  L.push(`   ${netDot(health.bsc)} <b>BSC</b>  ${netDot(health.eth)} <b>ETH</b>  ${netDot(health.tron)} <b>TRON</b>`);
+  L.push(`🌐 <b>Network Status</b>  |  ${netDot(health.bsc)} BSC  |  ${netDot(health.eth)} ETH  |  ${netDot(health.tron)} TRON`);
 
   // Token price
   L.push(``);
-  L.push(`💰 <b>Token Price</b>`);
-  L.push(`   <b>$${tokenPrice}</b> per ${sym}  ·  Min order: <b>${Number(minQty).toLocaleString()}</b> tokens`);
+  L.push(`💰 <b>Token Price</b>  |  ${tokenPrice} USDT per ${sym}  |  Min order: ${Number(minQty).toLocaleString()} tokens`);
 
   // Receiving wallets
   L.push(``);
   L.push(`📥 <b>Receiving Wallets</b>`);
 
   if (!uniqueEntries.length) {
-    L.push(`   <i>⚠️ No wallets configured</i>`);
+    L.push(``);
+    L.push(`<i>⚠️ No wallets configured</i>`);
   } else {
     let bIdx = 0;
     for (const net of ['bsc', 'eth', 'tron']) {
       if (!networkMap[net]) continue;
-      L.push(`   ${netEmoji[net]} <b>${netLabel[net]}</b>`);
       for (const addr of Object.keys(networkMap[net])) {
         const bal   = balances[bIdx++];
         const entry = networkMap[net][addr];
+        L.push(``);
         if (!entry.is_active) {
-          L.push(`      <code>${shortAddr(addr)}</code>  <i>disabled</i>`);
+          L.push(`${netEmoji[net]} <b>${netLabel[net]}</b>  |  <code>${shortAddr(addr)}</code>  |  <i>disabled</i>`);
           continue;
         }
-        const usdtStr   = bal.usdt   !== null ? `💵 $${n2(bal.usdt)}`                 : `💵 —`;
-        const nativeStr = bal.native !== null ? `${bal.nativeSym}: ${n4(bal.native)}` : `${bal.nativeSym}: —`;
-        L.push(`      <code>${shortAddr(addr)}</code>`);
-        L.push(`      ${usdtStr}  ·  ${nativeStr}`);
+        const usdtStr   = bal.usdt   !== null ? `${n2(bal.usdt)} USDT`            : '— USDT';
+        const nativeStr = bal.native !== null ? `${nativeSym[net]}: ${n4(bal.native)}` : `${nativeSym[net]}: —`;
+        L.push(`${netEmoji[net]} <b>${netLabel[net]}</b>  |  <code>${shortAddr(addr)}</code>  |  💵 ${usdtStr}  |  ${nativeStr}`);
       }
     }
   }
@@ -253,38 +248,32 @@ async function buildDashboard() {
   const bnbWarn   = distBal.bnb   !== null && distBal.bnb   < (config.lowGasThresholdBnb || 0.01);
 
   L.push(``);
-  L.push(`🏦 <b>Distribution Wallet</b>  <i>(BSC)</i>`);
-  L.push(`   <code>${shortAddr(config.distributionWalletAddress)}</code>`);
-  L.push(
-    `   ⚡ <b>${fmtFlash(distBal.flash)}</b>${flashWarn ? '  <b>⚠️ LOW</b>' : ''}` +
-    `  ·  💵 $${n2(distBal.usdt)}` +
-    `  ·  🟡 BNB ${n4(distBal.bnb)}${bnbWarn ? '  <b>⚠️ LOW</b>' : ''}`
-  );
+  L.push(`🏦 <b>Distribution Wallet</b>  |  <code>${shortAddr(config.distributionWalletAddress)}</code>`);
+  L.push(`⚡ <b>Flash Balance</b>  |  ${fmtFlash(distBal.flash)}${flashWarn ? '  ⚠️ LOW' : ''}  |  🟡 <b>BNB Balance</b>  |  ${n4(distBal.bnb)}${bnbWarn ? '  ⚠️ LOW' : ''}`);
 
-  // Today's stats
+  // Today
   const todayTotal   = parseInt(today.total,   10) || 0;
   const todayPending = parseInt(today.pending, 10) || 0;
   const todayFailed  = parseInt(today.failed,  10) || 0;
 
-  L.push(``);
-  L.push(`📊 <b>Today</b>  <i>· ${timeAgo(lastOrder)}</i>`);
-  L.push(`   📦 <b>${todayTotal}</b> order${todayTotal !== 1 ? 's' : ''}  ·  💵 <b>$${n2(today.revenue)}</b> revenue`);
+  const todayParts = [
+    `📦 ${todayTotal} order${todayTotal !== 1 ? 's' : ''}`,
+    `💵 ${n2(today.revenue)} USDT`,
+  ];
+  if (todayPending > 0) todayParts.push(`⏳ ${todayPending} pending`);
+  if (todayFailed  > 0) todayParts.push(`❌ ${todayFailed} failed`);
+  if (unmatched    > 0) todayParts.push(`🔍 ${unmatched} unmatched`);
 
-  const alerts = [];
-  if (todayPending > 0) alerts.push(`⏳ ${todayPending} pending`);
-  if (todayFailed  > 0) alerts.push(`❌ ${todayFailed} failed`);
-  if (unmatched    > 0) alerts.push(`🔍 ${unmatched} unmatched`);
-  L.push(`   ${alerts.length ? alerts.join('  ·  ') : '✅ All clear'}`);
-
-  // All-time stats
   L.push(``);
-  L.push(`📈 <b>All Time</b>  ·  💵 <b>$${n2(parseFloat(allTime.revenue))}</b> total revenue`);
-  L.push(`   <code>${bar}</code> ${pct.toFixed(2)}%`);
-  L.push(`   ⚡ ${fmtFlash(tokensSold)} <b>/</b> 1T ${sym} sold`);
+  L.push(`📊 <b>Today</b>  |  ${timeAgo(lastOrder)}  |  ${todayParts.join('  |  ')}`);
+
+  // All time
+  L.push(``);
+  L.push(`📈 <b>All Time</b>  |  ${n2(parseFloat(allTime.revenue))} USDT revenue`);
+  L.push(`<code>${bar}</code>  ${pct.toFixed(2)}%  |  ${fmtFlash(tokensSold)} / 1T ${sym} sold`);
 
   // Footer
   L.push(``);
-  L.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
   L.push(`🕐 <i>${fmtTimestamp(new Date())}</i>`);
 
   // Keyboard
