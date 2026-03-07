@@ -1,6 +1,5 @@
 'use strict';
 const { pool, getSetting } = require('../db');
-const notify  = require('../bot/notify');
 const logger  = require('../utils/logger').child({ service: 'expiry-engine' });
 
 // ── Job 1: Expire unpaid orders ───────────────────────────────
@@ -22,7 +21,6 @@ async function runExpiryJob() {
       method:   order.payment_method_code,
       expiredAt: order.expires_at,
     });
-    notify.orderExpired(order);
   }
 
   if (rows.length > 0) {
