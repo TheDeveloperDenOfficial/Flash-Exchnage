@@ -29,7 +29,7 @@ async function generateQR(address) {
 async function generateQRDataUrl(address) {
   return QRCode.toDataURL(address, {
     errorCorrectionLevel: 'M',
-    width: 200,
+    width: 300,
     margin: 2,
   });
 }
