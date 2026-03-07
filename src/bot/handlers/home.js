@@ -97,8 +97,8 @@ async function getDistBal() {
 }
 
 // ── Formatters ────────────────────────────────────────────────
-const n2  = (v) => v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const n4  = (v) => v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+const n2 = (v) => v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const n4 = (v) => v === null || v === undefined ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 
 function fmtFlash(v) {
   if (v === null || v === undefined) return '—';
@@ -115,7 +115,7 @@ function shortAddr(addr) {
 }
 
 function timeAgo(date) {
-  if (!date) return 'No orders yet';
+  if (!date) return 'no orders yet';
   const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
   if (s < 60)    return `${s}s ago`;
   if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
@@ -123,7 +123,9 @@ function timeAgo(date) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function dot(ok) { return ok ? '●' : '○'; }
+function fmtTimestamp(d) {
+  return d.toUTCString().replace(/:\d\d GMT$/, ' UTC');
+}
 
 // ── Build dashboard ───────────────────────────────────────────
 async function buildDashboard() {
@@ -165,14 +167,15 @@ async function buildDashboard() {
     `SELECT COUNT(*)::int AS cnt FROM wallet_transactions WHERE status='unmatched'`
   );
 
-  const today      = statsRow.rows[0];
-  const allTime    = allTimeRow.rows[0];
-  const lastOrder  = lastOrderRow.rows[0]?.created_at;
-  const unmatched  = parseInt(unmatchedRows[0].cnt, 10);
+  const today     = statsRow.rows[0];
+  const allTime   = allTimeRow.rows[0];
+  const lastOrder = lastOrderRow.rows[0]?.created_at;
+  const unmatched = parseInt(unmatchedRows[0].cnt, 10);
+  const sym       = tokenSymbol || 'FLASH';
 
   // Group wallets by network — deduplicate addresses per network
-  const wallets     = walletRows.rows;
-  const networkMap  = {};
+  const wallets    = walletRows.rows;
+  const networkMap = {};
   for (const w of wallets) {
     if (!networkMap[w.network]) networkMap[w.network] = {};
     if (!networkMap[w.network][w.address]) {
@@ -192,92 +195,109 @@ async function buildDashboard() {
   );
 
   // ── Sale progress ─────────────────────────────────────────
-  const tokensSold  = parseFloat(allTime.tokens_sold) || 0;
-  const pct         = Math.min(100, (tokensSold / TOTAL_SUPPLY) * 100);
-  const filled      = Math.round(pct / 5);
-  const bar         = '█'.repeat(filled) + '░'.repeat(20 - filled);
+  const tokensSold = parseFloat(allTime.tokens_sold) || 0;
+  const pct        = Math.min(100, (tokensSold / TOTAL_SUPPLY) * 100);
+  const filled     = Math.round(pct / 5);
+  const bar        = '▓'.repeat(filled) + '░'.repeat(20 - filled);
+
+  // ── Helpers ───────────────────────────────────────────────
+  const netDot   = (ok) => ok ? '🟢' : '🔴';
+  const netEmoji = { bsc: '🔶', eth: '💎', tron: '🔴' };
+  const netLabel = { bsc: 'BSC', eth: 'ETH', tron: 'TRON' };
 
   // ── Compose message ───────────────────────────────────────
   const L = [];
 
-  L.push(`<b>⚡ Flash Exchange</b>`);
-  L.push(`<code>─────────────────────────</code>`);
+  // Header
+  L.push(`⚡ <b>FLASH EXCHANGE</b>`);
+  L.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
 
-  // Price line
+  // Network status
   L.push(``);
-  L.push(`<b>${tokenSymbol || 'FLASH'}</b>  $${tokenPrice} per token  ·  Min: ${Number(minQty).toLocaleString()}`);
+  L.push(`🌐 <b>Network Status</b>`);
+  L.push(`   ${netDot(health.bsc)} <b>BSC</b>  ${netDot(health.eth)} <b>ETH</b>  ${netDot(health.tron)} <b>TRON</b>`);
 
-  // Receiving wallets — grouped by network
+  // Token price
   L.push(``);
-  L.push(`<b>Receiving Wallets</b>`);
+  L.push(`💰 <b>Token Price</b>`);
+  L.push(`   <b>$${tokenPrice}</b> per ${sym}  ·  Min order: <b>${Number(minQty).toLocaleString()}</b> tokens`);
+
+  // Receiving wallets
+  L.push(``);
+  L.push(`📥 <b>Receiving Wallets</b>`);
 
   if (!uniqueEntries.length) {
-    L.push(`  <i>No wallets configured</i>`);
+    L.push(`   <i>⚠️ No wallets configured</i>`);
   } else {
-    const netLabel = { bsc: 'BSC', eth: 'ETH', tron: 'TRON' };
     let bIdx = 0;
     for (const net of ['bsc', 'eth', 'tron']) {
       if (!networkMap[net]) continue;
-      L.push(`  <b>${netLabel[net]}</b>`);
+      L.push(`   ${netEmoji[net]} <b>${netLabel[net]}</b>`);
       for (const addr of Object.keys(networkMap[net])) {
-        const bal = balances[bIdx++];
+        const bal   = balances[bIdx++];
         const entry = networkMap[net][addr];
-        const statusMark = entry.is_active ? '' : '  <i>disabled</i>';
-        L.push(`  <code>${shortAddr(addr)}</code>${statusMark}`);
-        if (entry.is_active) {
-          const usdtStr   = bal.usdt   !== null ? `USDT: ${n2(bal.usdt)}`          : 'USDT: —';
-          const nativeStr = bal.native !== null ? `${bal.nativeSym}: ${n4(bal.native)}` : `${bal.nativeSym}: —`;
-          L.push(`    ${usdtStr}  ·  ${nativeStr}`);
+        if (!entry.is_active) {
+          L.push(`      <code>${shortAddr(addr)}</code>  <i>disabled</i>`);
+          continue;
         }
+        const usdtStr   = bal.usdt   !== null ? `💵 $${n2(bal.usdt)}`                 : `💵 —`;
+        const nativeStr = bal.native !== null ? `${bal.nativeSym}: ${n4(bal.native)}` : `${bal.nativeSym}: —`;
+        L.push(`      <code>${shortAddr(addr)}</code>`);
+        L.push(`      ${usdtStr}  ·  ${nativeStr}`);
       }
     }
   }
 
   // Distribution wallet
-  L.push(``);
-  L.push(`<b>Distribution Wallet</b>  <i>(BSC)</i>`);
-  L.push(`  <code>${shortAddr(config.distributionWalletAddress)}</code>`);
-
-  const flashWarn = (distBal.flash !== null && distBal.flash < config.lowTokenThreshold) ? ' ⚠️' : '';
-  const bnbWarn   = (distBal.bnb   !== null && distBal.bnb   < (config.lowGasThresholdBnb || 0.01)) ? ' ⚠️' : '';
-  L.push(`  FLASH: <b>${fmtFlash(distBal.flash)}</b>${flashWarn}  ·  USDT: ${n2(distBal.usdt)}  ·  BNB: ${n4(distBal.bnb)}${bnbWarn}`);
-
-  // Today
-  L.push(``);
-  L.push(`<b>Today</b>  <i>${timeAgo(lastOrder)}</i>`);
-  L.push(`  ${today.total} orders  ·  $${n2(today.revenue)} revenue`);
-
-  const flags = [];
-  if (today.pending > 0)  flags.push(`${today.pending} pending`);
-  if (today.failed  > 0)  flags.push(`${today.failed} failed ⚠️`);
-  if (unmatched     > 0)  flags.push(`${unmatched} unmatched ⚠️`);
-  if (flags.length)       L.push(`  ${flags.join('  ·  ')}`);
-
-  // All time
-  L.push(``);
-  L.push(`<b>All Time</b>  $${n2(parseFloat(allTime.revenue))} revenue`);
-  L.push(`  <code>${bar}</code> ${pct.toFixed(2)}%`);
-  L.push(`  ${fmtFlash(tokensSold)} / 1T ${tokenSymbol || 'FLASH'} sold`);
-
-  // Network
-  L.push(``);
-  L.push(`<b>Network</b>`);
-  L.push(`  BSC ${dot(health.bsc)}  ETH ${dot(health.eth)}  TRON ${dot(health.tron)}`);
+  const flashWarn = distBal.flash !== null && distBal.flash < config.lowTokenThreshold;
+  const bnbWarn   = distBal.bnb   !== null && distBal.bnb   < (config.lowGasThresholdBnb || 0.01);
 
   L.push(``);
-  L.push(`<code>─────────────────────────</code>`);
-  L.push(`<i>${new Date().toUTCString()}</i>`);
+  L.push(`🏦 <b>Distribution Wallet</b>  <i>(BSC)</i>`);
+  L.push(`   <code>${shortAddr(config.distributionWalletAddress)}</code>`);
+  L.push(
+    `   ⚡ <b>${fmtFlash(distBal.flash)}</b>${flashWarn ? '  <b>⚠️ LOW</b>' : ''}` +
+    `  ·  💵 $${n2(distBal.usdt)}` +
+    `  ·  🟡 BNB ${n4(distBal.bnb)}${bnbWarn ? '  <b>⚠️ LOW</b>' : ''}`
+  );
 
+  // Today's stats
+  const todayTotal   = parseInt(today.total,   10) || 0;
+  const todayPending = parseInt(today.pending, 10) || 0;
+  const todayFailed  = parseInt(today.failed,  10) || 0;
+
+  L.push(``);
+  L.push(`📊 <b>Today</b>  <i>· ${timeAgo(lastOrder)}</i>`);
+  L.push(`   📦 <b>${todayTotal}</b> order${todayTotal !== 1 ? 's' : ''}  ·  💵 <b>$${n2(today.revenue)}</b> revenue`);
+
+  const alerts = [];
+  if (todayPending > 0) alerts.push(`⏳ ${todayPending} pending`);
+  if (todayFailed  > 0) alerts.push(`❌ ${todayFailed} failed`);
+  if (unmatched    > 0) alerts.push(`🔍 ${unmatched} unmatched`);
+  L.push(`   ${alerts.length ? alerts.join('  ·  ') : '✅ All clear'}`);
+
+  // All-time stats
+  L.push(``);
+  L.push(`📈 <b>All Time</b>  ·  💵 <b>$${n2(parseFloat(allTime.revenue))}</b> total revenue`);
+  L.push(`   <code>${bar}</code> ${pct.toFixed(2)}%`);
+  L.push(`   ⚡ ${fmtFlash(tokensSold)} <b>/</b> 1T ${sym} sold`);
+
+  // Footer
+  L.push(``);
+  L.push(`<code>━━━━━━━━━━━━━━━━━━━━━━━━━</code>`);
+  L.push(`🕐 <i>${fmtTimestamp(new Date())}</i>`);
+
+  // Keyboard
   const keyboard = Markup.inlineKeyboard([
     [
-      Markup.button.callback('Orders',     'nav_orders'),
-      Markup.button.callback('Wallets',    'nav_wallets'),
-      Markup.button.callback('Settings',   'nav_settings'),
+      Markup.button.callback('📦 Orders',    'nav_orders'),
+      Markup.button.callback('👛 Wallets',   'nav_wallets'),
+      Markup.button.callback('⚙️ Settings',  'nav_settings'),
     ],
     [
-      Markup.button.callback('Admins',     'nav_admins'),
-      Markup.button.callback('Unmatched',  'nav_unmatched'),
-      Markup.button.callback('⟳ Refresh', 'nav_home'),
+      Markup.button.callback('👤 Admins',    'nav_admins'),
+      Markup.button.callback('🔍 Unmatched', 'nav_unmatched'),
+      Markup.button.callback('🔄 Refresh',   'nav_home'),
     ],
   ]);
 
@@ -290,8 +310,13 @@ async function handleHome(ctx) {
     const { msg, keyboard } = await buildDashboard();
     await smartEdit(ctx, msg, { parse_mode: 'HTML', ...keyboard });
   } catch (err) {
-    await smartEdit(ctx, `Dashboard error: ${err.message}`, {
-      ...Markup.inlineKeyboard([[Markup.button.callback('⟳ Retry', 'nav_home')]]),
+    await smartEdit(ctx, [
+      `⚠️ <b>Dashboard Error</b>`,
+      ``,
+      `<code>${err.message}</code>`,
+    ].join('\n'), {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Retry', 'nav_home')]]),
     });
   }
 }
