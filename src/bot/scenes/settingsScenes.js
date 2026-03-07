@@ -133,4 +133,42 @@ changeExpiryScene.action('se_cancel', async ctx => {
   await handleSettings(ctx);
 });
 
-module.exports = { changePriceScene, changeMinQtyScene, changeExpiryScene };
+// ── Change Marquee Text Scene ─────────────────────────────────
+const changeMarqueeScene = new Scenes.BaseScene('change_marquee');
+
+changeMarqueeScene.enter(async ctx => {
+  const current = await getSetting('marquee_text');
+  ctx.scene.session.step = 'awaiting_marquee';
+  await sceneEdit(ctx,
+    `📢 <b>Change Marquee Text</b>\n\nCurrent message:\n<i>${current ? current : 'Not set'}</i>\n\nSend the new announcement text.\nSend <code>clear</code> to hide the marquee.`,
+    Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'sm_cancel')]])
+  );
+});
+
+changeMarqueeScene.on('text', async ctx => {
+  if (ctx.scene.session.step !== 'awaiting_marquee') return;
+  await deleteUserMsg(ctx);
+  const val = ctx.message.text.trim();
+  const newText = val.toLowerCase() === 'clear' ? '' : val;
+  ctx.scene.session.newMarquee = newText;
+  const preview = newText || '<i>(hidden — marquee cleared)</i>';
+  await sceneEdit(ctx,
+    `⚠️ <b>Confirm Marquee Update</b>\n\nNew message:\n${preview}`,
+    Markup.inlineKeyboard([[Markup.button.callback('✅ Confirm', 'sm_confirm'), Markup.button.callback('❌ Cancel', 'sm_cancel')]])
+  );
+});
+
+changeMarqueeScene.action('sm_confirm', async ctx => {
+  await setSetting('marquee_text', ctx.scene.session.newMarquee, ctx.from.id);
+  await ctx.answerCbQuery('✅ Marquee updated');
+  ctx.scene.leave();
+  await handleSettings(ctx);
+});
+
+changeMarqueeScene.action('sm_cancel', async ctx => {
+  await ctx.answerCbQuery('Cancelled');
+  ctx.scene.leave();
+  await handleSettings(ctx);
+});
+
+module.exports = { changePriceScene, changeMinQtyScene, changeExpiryScene, changeMarqueeScene };
