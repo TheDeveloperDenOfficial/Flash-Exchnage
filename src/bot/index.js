@@ -15,7 +15,7 @@ const { handleUnmatched, handleUnmatchedDetail, handleMarkResolved, handleMarkRe
 
 // Scenes
 const addWalletScene     = require('./scenes/addWallet');
-const { changePriceScene, changeMinQtyScene, changeExpiryScene } = require('./scenes/settingsScenes');
+const { changePriceScene, changeMinQtyScene, changeExpiryScene, changeMarqueeScene } = require('./scenes/settingsScenes');
 const { addAdminScene, linkTransactionScene } = require('./scenes/adminScenes');
 
 function createBot() {
@@ -30,6 +30,7 @@ function createBot() {
     changePriceScene,
     changeMinQtyScene,
     changeExpiryScene,
+    changeMarqueeScene,
     addAdminScene,
     linkTransactionScene,
   ]);
@@ -74,6 +75,7 @@ function createBot() {
   bot.action('settings_price',   ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_price'); });
   bot.action('settings_min_qty', ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_min_qty'); });
   bot.action('settings_expiry',  ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_expiry'); });
+  bot.action('settings_marquee', ctx => { ctx.answerCbQuery(); ctx.scene.enter('change_marquee'); });
 
   // ── Admins ──────────────────────────────────────────────────
   bot.action('admin_add',             ctx => { ctx.answerCbQuery(); ctx.scene.enter('add_admin'); });
