@@ -83,20 +83,36 @@ async function getEvmBal(address, network) {
 
 // ── Tron wallet balances ──────────────────────────────────────
 async function getTronBal(address) {
+  const TRON_TIMEOUT = 12000; // longer timeout — two sequential API calls
+  const headers = config.trongridApiKey ? { 'TRON-PRO-API-KEY': config.trongridApiKey } : {};
+
   try {
-    const headers = config.trongridApiKey ? { 'TRON-PRO-API-KEY': config.trongridApiKey } : {};
-    const [accRes, trc20Res] = await withTimeout(Promise.all([
-      axios.get(`https://api.trongrid.io/v1/accounts/${address}`, { headers, timeout: TIMEOUT_MS }),
-      axios.get(`https://api.trongrid.io/v1/accounts/${address}/tokens?limit=10`, { headers, timeout: TIMEOUT_MS }),
-    ]));
-    const trx       = (accRes.data?.data?.[0]?.balance || 0) / 1_000_000;
-    const trc20List = trc20Res.data?.data || [];
-    const usdtEntry = trc20List.find(t =>
-      (t.tokenId || t.token_id || '').toLowerCase() === config.usdtTrc20Contract.toLowerCase()
-    );
-    const usdt = usdtEntry
-      ? parseFloat(usdtEntry.balance) / Math.pow(10, config.usdtDecimals.tron)
-      : 0;
+    // Fetch account (TRX balance) and TRC20 tokens separately with individual timeouts
+    const [accRes, trc20Res] = await Promise.all([
+      axios.get(`https://api.trongrid.io/v1/accounts/${address}`, {
+        headers, timeout: TRON_TIMEOUT,
+      }),
+      axios.get(`https://api.trongrid.io/v1/accounts/${address}/trc20`, {
+        headers, timeout: TRON_TIMEOUT,
+      }),
+    ]);
+
+    const trx = (accRes.data?.data?.[0]?.balance || 0) / 1_000_000;
+
+    // TronGrid /trc20 returns an array of objects: { contractAddress: balance }
+    const trc20List  = trc20Res.data?.data || [];
+    const usdtTarget = config.usdtTrc20Contract; // e.g. TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+    let usdt = 0;
+
+    for (const entry of trc20List) {
+      // Each entry is { [contractAddress]: "rawBalance" }
+      const contractAddr = Object.keys(entry)[0];
+      if (contractAddr && contractAddr.toLowerCase() === usdtTarget.toLowerCase()) {
+        usdt = parseFloat(Object.values(entry)[0]) / Math.pow(10, config.usdtDecimals.tron);
+        break;
+      }
+    }
+
     return { usdt, native: trx, nativeSym: 'TRX', error: false };
   } catch {
     return { usdt: null, native: null, nativeSym: 'TRX', error: true };
