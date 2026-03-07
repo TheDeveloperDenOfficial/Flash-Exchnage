@@ -7,15 +7,13 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ── 1. settings ──────────────────────────────────────────────
--- Global key-value config. Admin changes via Telegram bot.
 CREATE TABLE IF NOT EXISTS settings (
   key        VARCHAR(100) PRIMARY KEY,
   value      TEXT         NOT NULL,
   updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-  updated_by BIGINT       -- Telegram user ID of admin who last changed it
+  updated_by BIGINT
 );
 
--- Seed defaults (ON CONFLICT = idempotent, won't overwrite admin changes)
 INSERT INTO settings (key, value) VALUES
   ('token_price_usd',      '0.02'),
   ('token_symbol',         'FLASH'),
@@ -30,13 +28,12 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ── 2. payment_methods ───────────────────────────────────────
--- Pre-seeded. Admin enables/disables. Never deleted.
 CREATE TABLE IF NOT EXISTS payment_methods (
   id          SERIAL       PRIMARY KEY,
   name        VARCHAR(100) NOT NULL,
   code        VARCHAR(50)  NOT NULL UNIQUE,
-  network     VARCHAR(20)  NOT NULL, -- bsc | eth | tron
-  coin_symbol VARCHAR(20)  NOT NULL, -- BNB | ETH | TRX | USDT
+  network     VARCHAR(20)  NOT NULL,
+  coin_symbol VARCHAR(20)  NOT NULL,
   is_active   BOOLEAN      NOT NULL DEFAULT true,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -51,7 +48,6 @@ INSERT INTO payment_methods (name, code, network, coin_symbol, is_active) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- ── 3. payment_wallets ───────────────────────────────────────
--- One wallet per payment method. Admin manages via bot.
 CREATE TABLE IF NOT EXISTS payment_wallets (
   id                  SERIAL       PRIMARY KEY,
   payment_method_code VARCHAR(50)  NOT NULL UNIQUE REFERENCES payment_methods(code) ON DELETE RESTRICT,
@@ -82,12 +78,11 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_address         VARCHAR(100) NOT NULL,
   receiving_wallet        VARCHAR(100) NOT NULL,
   status                  VARCHAR(30)  NOT NULL DEFAULT 'waiting_payment',
-  -- waiting_payment | matched | sending | completed | expired | failed | manually_completed
   tx_hash_in              VARCHAR(100),
   tx_hash_out             VARCHAR(100),
   block_number_in         BIGINT,
   retry_count             INTEGER      NOT NULL DEFAULT 0,
-  manually_completed_by   BIGINT,      -- Telegram user ID
+  manually_completed_by   BIGINT,
   matched_at              TIMESTAMPTZ,
   completed_at            TIMESTAMPTZ,
   expires_at              TIMESTAMPTZ  NOT NULL,
@@ -95,18 +90,10 @@ CREATE TABLE IF NOT EXISTS orders (
   updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_orders_status
-  ON orders (status);
-
-CREATE INDEX IF NOT EXISTS idx_orders_match
-  ON orders (network, coin_symbol, unique_crypto_amount)
-  WHERE status = 'waiting_payment';
-
-CREATE INDEX IF NOT EXISTS idx_orders_wallet
-  ON orders (receiving_wallet, status, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_orders_created
-  ON orders (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_status   ON orders (status);
+CREATE INDEX IF NOT EXISTS idx_orders_match    ON orders (network, coin_symbol, unique_crypto_amount) WHERE status = 'waiting_payment';
+CREATE INDEX IF NOT EXISTS idx_orders_wallet   ON orders (receiving_wallet, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_created  ON orders (created_at DESC);
 
 -- ── 5. wallet_transactions ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -119,7 +106,6 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   amount           NUMERIC(30,8) NOT NULL,
   block_number     BIGINT,
   status           VARCHAR(30)   NOT NULL DEFAULT 'unmatched',
-  -- unmatched | matched | expired_match | resolved | refund_marked
   order_id         UUID          REFERENCES orders(id) ON DELETE SET NULL,
   resolved_by      BIGINT,
   resolved_note    TEXT,
@@ -130,14 +116,9 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   resolved_at      TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_txns_status
-  ON wallet_transactions (status);
-
-CREATE INDEX IF NOT EXISTS idx_txns_amount
-  ON wallet_transactions (network, coin_symbol, amount);
-
-CREATE INDEX IF NOT EXISTS idx_txns_detected
-  ON wallet_transactions (detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_txns_status   ON wallet_transactions (status);
+CREATE INDEX IF NOT EXISTS idx_txns_amount   ON wallet_transactions (network, coin_symbol, amount);
+CREATE INDEX IF NOT EXISTS idx_txns_detected ON wallet_transactions (detected_at DESC);
 
 -- ── 6. admins ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS admins (
@@ -150,6 +131,19 @@ CREATE TABLE IF NOT EXISTS admins (
   added_by     BIGINT,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 7. admin_containers ──────────────────────────────────────
+-- Stores persistent message IDs for each admin's 3 containers
+CREATE TABLE IF NOT EXISTS admin_containers (
+  telegram_id      BIGINT      PRIMARY KEY,
+  menu_msg_id      BIGINT,     -- Container 1: Main Menu
+  alerts_msg_id    BIGINT,     -- Container 2: Alerts
+  orders_msg_id    BIGINT,     -- Container 3: Live Orders
+  -- Notification log: last 10 alerts + last 10 order events (JSON arrays)
+  alerts_log       TEXT        NOT NULL DEFAULT '[]',
+  orders_log       TEXT        NOT NULL DEFAULT '[]',
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ── auto updated_at trigger ──────────────────────────────────
