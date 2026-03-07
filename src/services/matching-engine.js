@@ -80,7 +80,7 @@ async function matchTransaction(txn) {
           // Notify via bot after result
           const notify = require('../bot/notify');
           if (result.success) {
-            notify.orderCompleted(order, result.txHash);
+            notify.orderCompleted({ ...order, tx_hash_in: order.tx_hash_in }, result.txHash);
           } else {
             notify.orderFailed(order, result.error);
           }
@@ -89,7 +89,7 @@ async function matchTransaction(txn) {
 
       // Notify payment detected
       const notify = require('../bot/notify');
-      notify.paymentDetected(order, txn.tx_hash);
+      notify.paymentDetected({ ...order, tx_hash_in: txn.tx_hash, network: txn.network, coin_symbol: txn.coin_symbol });
 
       return { matched: true };
     } finally {
