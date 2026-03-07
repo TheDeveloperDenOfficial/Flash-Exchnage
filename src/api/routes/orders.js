@@ -3,7 +3,7 @@ const express = require('express');
 const { pool, getSetting } = require('../../db');
 const { getPrice, arePricesFresh } = require('../../services/price-updater');
 const { generateVerifiedUniqueAmount } = require('../../utils/uniqueAmount');
-const { validateBep20Wallet } = require('../../utils/validators');
+const { validateBep20Wallet, isValidTronAddress } = require('../../utils/validators');
 const { generateQRDataUrl } = require('../../utils/qr');
 const logger = require('../../utils/logger').child({ service: 'orders-api' });
 
@@ -39,9 +39,22 @@ router.post('/', async (req, res) => {
     if (errors.length) return res.status(400).json({ error: errors.join('. ') });
 
     // ── Validate wallet ─────────────────────────────────
-    const walletCheck = await validateBep20Wallet(receiving_wallet);
-    if (!walletCheck.valid) {
-      return res.status(400).json({ error: walletCheck.reason });
+    // Determine network from payment method before wallet validation
+    const { rows: pmCheckRows } = await pool.query(
+      `SELECT network FROM payment_methods WHERE code = $1 AND is_active = true`,
+      [payment_method_code]
+    );
+    const pmNetwork = pmCheckRows[0]?.network || '';
+
+    if (pmNetwork === 'tron') {
+      if (!isValidTronAddress(receiving_wallet.trim())) {
+        return res.status(400).json({ error: 'Invalid TRON wallet address. Must start with T and be 34 characters.' });
+      }
+    } else {
+      const walletCheck = await validateBep20Wallet(receiving_wallet);
+      if (!walletCheck.valid) {
+        return res.status(400).json({ error: walletCheck.reason });
+      }
     }
 
     // ── Payment method + wallet ─────────────────────────
@@ -93,7 +106,7 @@ router.post('/', async (req, res) => {
        RETURNING id, expires_at, created_at`,
       [
         payment_method_code, network, coinSymbol,
-        usdtAmount.toFixed(8), qty.toFixed(8), tokenPrice.toFixed(8),
+        usdtAmount.toFixed(8), String(qty), tokenPrice.toFixed(8),
         cryptoAmount.toFixed(8), uniqueAmount.toFixed(8), coinPriceUsd.toFixed(8),
         fingerprint, paymentAddress, receiving_wallet.trim(), expiresAt.toISOString(),
       ]
