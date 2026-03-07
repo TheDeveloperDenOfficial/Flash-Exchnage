@@ -541,7 +541,7 @@
       + '<button id="fe-copy-amount" style="font-size:12px;background:#38385f;color:#fff;border:none;padding:4px 14px;border-radius:20px;cursor:pointer;">Copy Amount</button>'
       + '</div>'
       + '<div style="display:flex;gap:12px;margin-bottom:14px;align-items:flex-start;">'
-      + '<img id="fe-qr" src="" alt="QR" style="width:80px;height:80px;border-radius:8px;border:1px solid #e8e7ff;flex-shrink:0;">'
+      + '<img id="fe-qr" src="" alt="QR" style="width:160px;height:160px;border-radius:8px;border:1px solid #e8e7ff;flex-shrink:0;">'
       + '<div style="flex:1;"><div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Payment Address</div>'
       + '<div style="background:#f5f5f5;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:6px;">'
       + '<span id="fe-address" style="font-size:11px;font-family:monospace;word-break:break-all;flex:1;color:#333;">—</span>'
@@ -609,7 +609,7 @@
     var qrImg = document.getElementById('fe-qr');
     if (qrImg) {
       qrImg.src = order.qrDataUrl ||
-        'https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=' + encodeURIComponent(order.paymentAddress || '');
+        'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(order.paymentAddress || '');
     }
 
     setText('fe-modal-sub', 'Send ' + (order.coinSymbol || '') + ' on ' + (order.network || '').toUpperCase() + ' to receive tokens');
