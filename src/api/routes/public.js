@@ -10,10 +10,11 @@ const ICON_CDN = 'https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/c
 // Called once on page load. Returns everything the frontend needs.
 router.get('/config', async (_req, res) => {
   try {
-    const [tokenPrice, tokenSymbol, minOrderQty] = await Promise.all([
+    const [tokenPrice, tokenSymbol, minOrderQty, marqueeText] = await Promise.all([
       getSetting('token_price_usd'),
       getSetting('token_symbol'),
       getSetting('min_order_qty'),
+      getSetting('marquee_text'),
     ]);
 
     const { rows: methods } = await pool.query(
@@ -43,6 +44,7 @@ router.get('/config', async (_req, res) => {
       tokenPriceUsd:  parseFloat(tokenPrice) || 0.02,
       tokenSymbol:    tokenSymbol || 'FLASH',
       minOrderQty:    parseInt(minOrderQty, 10) || 100,
+      marqueeText:    marqueeText || '',
       paymentMethods: activeMethods,
     });
   } catch (err) {
@@ -55,14 +57,8 @@ router.get('/config', async (_req, res) => {
 router.get('/order/lookup', async (req, res) => {
   try {
     const { wallet } = req.query;
-    if (!wallet) {
+    if (!wallet || wallet.trim().length < 20) {
       return res.status(400).json({ error: 'Valid wallet address required' });
-    }
-    const w = wallet.trim();
-    const isEvm  = /^0x[0-9a-fA-F]{40}$/.test(w);
-    const isTron = /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(w);
-    if (!isEvm && !isTron) {
-      return res.status(400).json({ error: 'Invalid wallet address format.' });
     }
 
     const { rows } = await pool.query(
@@ -75,7 +71,7 @@ router.get('/order/lookup', async (req, res) => {
          AND expires_at > NOW()
        ORDER BY created_at DESC
        LIMIT 1`,
-      [w]
+      [wallet.trim()]
     );
 
     if (!rows.length) {
