@@ -35,9 +35,17 @@ async function checkBalances() {
 
     if (native < threshold) {
       logger.error(`⚠️  URGENT: Low ${nativeSym} balance on distribution wallet`, { balance: native, threshold });
+      try {
+        const notify = require('../bot/notify');
+        notify.lowBalance(nativeSym, native.toFixed(6), threshold);
+      } catch {}
     }
     if (tokenBal < config.lowTokenThreshold) {
       logger.error(`⚠️  URGENT: Low ${config.tokenSymbol} balance on distribution wallet`, { balance: tokenBal, threshold: config.lowTokenThreshold });
+      try {
+        const notify = require('../bot/notify');
+        notify.lowBalance(config.tokenSymbol, tokenBal.toFixed(2), config.lowTokenThreshold);
+      } catch {}
     }
     return { native, tokenBal, nativeSym };
   } catch (err) {
