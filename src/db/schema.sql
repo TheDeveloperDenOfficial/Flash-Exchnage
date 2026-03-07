@@ -24,7 +24,8 @@ INSERT INTO settings (key, value) VALUES
   ('last_tron_ts',         '0'),
   ('price_bnb_usd',        '0'),
   ('price_eth_usd',        '0'),
-  ('price_trx_usd',        '0')
+  ('price_trx_usd',        '0'),
+  ('marquee_text',         '🚀 Flash Token presale is LIVE — Buy FLASH now with BNB, ETH, TRX or USDT. Fast delivery, no registration required. Limited early price!')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── 2. payment_methods ───────────────────────────────────────
