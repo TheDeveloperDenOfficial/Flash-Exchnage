@@ -3,7 +3,6 @@ const { Telegraf, Scenes, session } = require('telegraf');
 const config      = require('../config');
 const adminOnly   = require('./middleware/auth');
 const containers  = require('./containers');
-const { buildDashboard } = require('./handlers/home');
 
 // Handlers
 const { handleHome }     = require('./handlers/home');
@@ -92,20 +91,6 @@ function createBot() {
 
   // ── BotFather commands — clear all so /start doesn't appear ──
   bot.telegram.setMyCommands([]).catch(() => {});
-
-  // ── On launch: clear chat + init containers ──────────────────
-  bot.launch = (function(originalLaunch) {
-    return async function(...args) {
-      const result = await originalLaunch.apply(this, args);
-      containers.setBot(bot);
-      try {
-        await containers.initContainers(buildDashboard);
-      } catch (err) {
-        console.error('[bot] Container init failed:', err.message);
-      }
-      return result;
-    };
-  })(bot.launch.bind(bot));
 
   // ── Error handler ────────────────────────────────────────────
   bot.catch((err, ctx) => {
