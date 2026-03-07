@@ -1,7 +1,9 @@
 'use strict';
 const { Telegraf, Scenes, session } = require('telegraf');
-const config    = require('../config');
-const adminOnly = require('./middleware/auth');
+const config      = require('../config');
+const adminOnly   = require('./middleware/auth');
+const containers  = require('./containers');
+const { buildDashboard } = require('./handlers/home');
 
 // Handlers
 const { handleHome }     = require('./handlers/home');
@@ -38,8 +40,15 @@ function createBot() {
   bot.use(stage.middleware());
   bot.use(adminOnly);
 
-  // ── /start → live dashboard ─────────────────────────────────
-  bot.start(ctx => handleHome(ctx));
+  // ── /start → silently ignored (containers handle everything) ──
+  bot.start(async ctx => {
+    // Delete the /start command message to keep chat clean
+    try { await ctx.deleteMessage(); } catch {}
+  });
+
+  // ── Refresh actions for containers ──────────────────────────
+  bot.action('refresh_alerts', ctx => containers.refreshAlerts(ctx));
+  bot.action('refresh_orders', ctx => containers.refreshOrders(ctx));
 
   // ── Navigation ──────────────────────────────────────────────
   bot.action('nav_home',      ctx => { ctx.answerCbQuery(); return handleHome(ctx); });
@@ -81,10 +90,22 @@ function createBot() {
     ctx.scene.enter('link_transaction');
   });
 
-  // ── BotFather commands ───────────────────────────────────────
-  bot.telegram.setMyCommands([
-    { command: 'start', description: '⚡ Open Flash Exchange dashboard' },
-  ]).catch(() => {});
+  // ── BotFather commands — clear all so /start doesn't appear ──
+  bot.telegram.setMyCommands([]).catch(() => {});
+
+  // ── On launch: clear chat + init containers ──────────────────
+  bot.launch = (function(originalLaunch) {
+    return async function(...args) {
+      const result = await originalLaunch.apply(this, args);
+      containers.setBot(bot);
+      try {
+        await containers.initContainers(buildDashboard);
+      } catch (err) {
+        console.error('[bot] Container init failed:', err.message);
+      }
+      return result;
+    };
+  })(bot.launch.bind(bot));
 
   // ── Error handler ────────────────────────────────────────────
   bot.catch((err, ctx) => {
