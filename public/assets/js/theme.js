@@ -52,6 +52,51 @@
     var qtyInput = document.getElementById('icox_quantity');
     if (qtyInput) qtyInput.min = appConfig.minOrderQty;
     buildPaymentMethodSelect();
+    applyMarquee(appConfig.marqueeText);
+  }
+
+  // ── Marquee ─────────────────────────────────────────────────
+  var _marqueeRAF = null;
+
+  function applyMarquee(text) {
+    var wrap  = document.getElementById('fe-marquee-wrap');
+    var track = document.getElementById('fe-marquee-track');
+    var span  = document.getElementById('fe-marquee-text');
+    var clone = document.getElementById('fe-marquee-text-clone');
+    if (!wrap || !span || !clone || !track) return;
+
+    if (!text || !text.trim()) { wrap.style.display = 'none'; return; }
+
+    span.textContent  = text;
+    clone.textContent = text;
+    wrap.style.display = 'block';
+
+    // Cancel any previous animation loop
+    if (_marqueeRAF) { cancelAnimationFrame(_marqueeRAF); _marqueeRAF = null; }
+
+    // Wait for layout then start smooth CSS animation
+    requestAnimationFrame(function () {
+      var spanW = span.offsetWidth + 120; // width + padding (60px each side)
+      var speed = 60; // pixels per second
+
+      // Reset position
+      track.style.transition = 'none';
+      track.style.transform  = 'translateX(0)';
+
+      var pos      = 0;
+      var lastTime = null;
+
+      function step(ts) {
+        if (!lastTime) lastTime = ts;
+        var delta = (ts - lastTime) / 1000;
+        lastTime  = ts;
+        pos -= speed * delta;
+        if (pos <= -spanW) pos += spanW;
+        track.style.transform = 'translateX(' + pos + 'px)';
+        _marqueeRAF = requestAnimationFrame(step);
+      }
+      _marqueeRAF = requestAnimationFrame(step);
+    });
   }
 
   // ── Payment method dropdown ─────────────────────────────────
