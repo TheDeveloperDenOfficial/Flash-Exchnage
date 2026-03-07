@@ -55,8 +55,14 @@ router.get('/config', async (_req, res) => {
 router.get('/order/lookup', async (req, res) => {
   try {
     const { wallet } = req.query;
-    if (!wallet || wallet.trim().length < 20) {
+    if (!wallet) {
       return res.status(400).json({ error: 'Valid wallet address required' });
+    }
+    const w = wallet.trim();
+    const isEvm  = /^0x[0-9a-fA-F]{40}$/.test(w);
+    const isTron = /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(w);
+    if (!isEvm && !isTron) {
+      return res.status(400).json({ error: 'Invalid wallet address format.' });
     }
 
     const { rows } = await pool.query(
@@ -69,7 +75,7 @@ router.get('/order/lookup', async (req, res) => {
          AND expires_at > NOW()
        ORDER BY created_at DESC
        LIMIT 1`,
-      [wallet.trim()]
+      [w]
     );
 
     if (!rows.length) {
