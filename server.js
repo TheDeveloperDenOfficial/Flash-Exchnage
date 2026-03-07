@@ -1,339 +1,149 @@
-<!DOCTYPE html>
-<html lang="en" class="js">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <meta name="description" content="Buy Flash tokens instantly">
-    <link rel="shortcut icon" href="assets/images/favicon.png">
-    <title>Flash Exchange | Buy Flash Instantly</title>
-    <link rel="stylesheet" href="assets/css/vendor.bundle.css?ver=210">
-    <link rel="stylesheet" href="assets/css/style-lavender.css?ver=210">
-    <link rel="stylesheet" href="assets/css/theme.css?ver=210">
-</head>
-<body class="nk-body body-wider mode-onepage">
-<div class="nk-wrap">
-    <header class="nk-header page-header is-transparent is-sticky is-shrink" id="header">
-        <div class="header-main">
-            <div class="header-container container">
-                <div class="header-wrap">
-                    <div class="header-logo logo animated" data-animate="fadeInDown" data-delay=".65">
-                        <a href="./" class="logo-link">
-                            <img class="logo-dark"  src="assets/images/logo2x.png" srcset="assets/images/logo2x.png 2x" alt="logo">
-                            <img class="logo-light" src="assets/images/logo-full-white2x.png" srcset="assets/images/logo-full-white2x.png 2x" alt="logo">
-                        </a>
-                    </div>
-                    <div class="header-nav-toggle">
-                        <a href="#" class="navbar-toggle" data-menu-toggle="example-menu-04">
-                            <div class="toggle-line"><span></span></div>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
+'use strict';
+require('dotenv').config();
 
-        <!-- Banner -->
-        <div class="header-banner bg-white">
-            <div class="nk-banner">
-                <div class="banner banner-single">
-                    <div class="banner-rounded-bg bg-theme-alt">
-                        <span class="banner-shade-1"><span class="banner-shade-2"><span class="banner-shade-3"></span></span></span>
-                    </div>
-                    <div class="banner-wrap">
-                        <div class="container container-z">
-                            <div class="row align-items-center justify-content-center">
-                                <div class="col-lg-12 col-xl-10 text-center">
-                                    <div class="banner-caption wide-auto-xl pdb-l pdt-r tc-light">
-                                        <div class="cpn-head">
-                                            <h1 class="title title-md animated" data-animate="fadeInUp" data-delay="1.25">Flash Exchange <span class="title-thin">Instant Flash Crypto</span> <span class="title-thin">at Your</span> Fingertips</h1>
-                                        </div>
-                                        <div class="cpn-text cpn-text-s1 cpn-text-center">
-                                            <p class="lead animated" data-animate="fadeInUp" data-delay="1.35">Purchase Flash tokens instantly through our secure blockchain-powered platform. Fast processing, transparent pricing, and direct delivery to your wallet.</p>
-                                        </div>
-                                    </div>
-                                </div>
+const express    = require('express');
+const helmet     = require('helmet');
+const cors       = require('cors');
+const rateLimit  = require('express-rate-limit');
+const path       = require('path');
 
-                                <div class="col-xl-8 col-lg-10">
+const { migrate, ensureBootstrapAdmin, pool } = require('./src/db');
+const logger     = require('./src/utils/logger');
+const config     = require('./src/config');
+const notify     = require('./src/bot/notify');
 
-                                    <!-- Pending Order Banner -->
-                                    <div id="fe-pending-banner" style="display:none;margin-bottom:16px;background:#fff8e1;border:1px solid #ffe082;border-radius:12px;padding:14px 18px;">
-                                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-                                            <div>
-                                                <strong style="color:#7c6a00;">⚡ You have a pending order</strong>
-                                                <span id="fe-banner-info" style="color:#7c6a00;font-size:13px;margin-left:8px;"></span>
-                                            </div>
-                                            <div style="display:flex;gap:8px;">
-                                                <button id="fe-banner-resume" style="background:#38385f;color:#fff;border:none;padding:6px 16px;border-radius:20px;font-size:13px;cursor:pointer;">Resume Payment</button>
-                                                <button id="fe-banner-dismiss" style="background:transparent;color:#7c6a00;border:1px solid #ffe082;padding:6px 16px;border-radius:20px;font-size:13px;cursor:pointer;">Dismiss</button>
-                                            </div>
-                                        </div>
-                                    </div>
+// Routes
+const publicRoutes = require('./src/api/routes/public');
+const orderRoutes  = require('./src/api/routes/orders');
 
-                                    <!-- Buy Form Card -->
-                                    <div class="token-status bg-white token-status-s6 shadow-dark round mb-5 animated" data-animate="fadeInUp" data-delay="1.65">
-                                        <h6 class="title title-xs-alt fw-6 text-center mb-1" style="color:#38385f;">Buy Flash Tokens</h6>
-                                        <p class="token-buy-rate text-center mb-4">
-                                            1 <span id="fe-token-symbol">FLASH</span> = <strong id="fe-token-price">$0.02 USDT</strong>
-                                        </p>
+// Services
+const priceUpdater    = require('./src/services/price-updater');
+const scanner         = require('./src/services/blockchain-scanner');
+const matchingEngine  = require('./src/services/matching-engine');
+const expiryEngine    = require('./src/services/expiry-engine');
+const { checkBalances } = require('./src/services/token-sender');
 
-                                        <!-- Check existing order (different device) -->
-                                        <div id="fe-check-order" style="margin-bottom:16px;text-align:center;">
-                                            <button id="fe-check-toggle" style="background:none;border:none;color:#38385f;font-size:12px;cursor:pointer;text-decoration:underline;opacity:.6;">
-                                                Different device? Check existing order
-                                            </button>
-                                            <div id="fe-check-form" style="display:none;margin-top:10px;">
-                                                <div style="display:flex;gap:8px;">
-                                                    <input id="fe-lookup-wallet" type="text" class="input-bordered" placeholder="Your receiving wallet address" style="flex:1;font-size:13px;">
-                                                    <button id="fe-lookup-btn" style="background:#38385f;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;">Check</button>
-                                                </div>
-                                                <p id="fe-lookup-error" style="color:#dc3545;font-size:12px;margin-top:4px;display:none;"></p>
-                                            </div>
-                                        </div>
+// Bot
+const { createBot } = require('./src/bot');
 
-                                        <div class="token-buy-form">
-                                            <div class="field-item pb-3">
-                                                <label class="field-label" for="icox_quantity">
-                                                    Quantity (<span class="fe-sym">FLASH</span>)
-                                                    <span id="fe-min-qty-label" style="font-size:11px;color:#888;margin-left:4px;"></span>
-                                                </label>
-                                                <div class="field-wrap">
-                                                    <input type="number" id="icox_quantity" name="icox_quantity" class="input-bordered" min="1" step="1" placeholder="e.g. 500" required>
-                                                </div>
-                                            </div>
+const app = express();
 
-                                            <div class="field-item pb-3">
-                                                <label class="field-label" for="usdt_amount">Total Amount to Pay (USD)</label>
-                                                <div class="field-wrap token-total-wrap">
-                                                    <input type="text" id="usdt_amount" name="usdt_amount" class="input-bordered token-total-input" placeholder="—" readonly tabindex="-1">
-                                                    <span class="token-total-currency">USD</span>
-                                                </div>
-                                            </div>
+// ── Trust proxy (required when behind Nginx/Coolify reverse proxy) ──
+app.set('trust proxy', 1);
 
-                                            <div class="field-item pb-3">
-                                                <label class="field-label" for="payment_method">Payment Method</label>
-                                                <div class="field-wrap field-select" style="position:relative;">
-                                                    <select id="payment_method" name="payment_method" class="input-bordered" style="padding-left:44px;">
-                                                        <option value="">Select Payment Method</option>
-                                                    </select>
-                                                    <img id="fe-coin-icon" src="" alt="" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);width:22px;height:22px;border-radius:50%;display:none;">
-                                                </div>
-                                            </div>
+// ── Security ──────────────────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors({ origin: true, methods: ['GET', 'POST', 'OPTIONS'] }));
 
-                                            <div class="field-item pb-4">
-                                                <label class="field-label" for="receiving_wallet">Your BEP-20 Wallet Address</label>
-                                                <div class="field-wrap">
-                                                    <input type="text" id="receiving_wallet" name="receiving_wallet" class="input-bordered" placeholder="0x... BEP-20 wallet address" required>
-                                                </div>
-                                                <p style="font-size:11px;color:#888;margin-top:4px;">FLASH tokens will be sent to this address (BSC network)</p>
-                                            </div>
+// ── Rate Limits ───────────────────────────────────────────────
+const apiLimit = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+const orderLimit = rateLimit({
+  windowMs: 10 * 60_000, max: 15,
+  message: { error: 'Too many order attempts. Please wait a few minutes.' },
+});
 
-                                            <div id="fe-form-error" style="display:none;background:#f8d7da;color:#721c24;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;"></div>
+// ── Body Parser ───────────────────────────────────────────────
+app.use(express.json({ limit: '50kb' }));
+app.use(express.urlencoded({ extended: false }));
 
-                                            <button type="button" id="fe-buy-btn" class="btn btn-round btn-primary btn-lg d-block text-center" style="width:100%;border:none;cursor:pointer;">Buy Flash Now</button>
-                                        </div>
-                                    </div>
+// ── API Routes ────────────────────────────────────────────────
+app.use('/api',        apiLimit, publicRoutes);
+app.use('/api/order',  apiLimit, orderLimit, orderRoutes);
 
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="nk-ovm ovm-top ovm-h-80 bg-theme-alt d-lg-none"></div>
-            </div>
-        </div>
-    </header>
+// ── Health ────────────────────────────────────────────────────
+// Both /health and /api/health supported — Coolify uses /api/health by default
+async function healthHandler(_req, res) {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
+  } catch {
+    res.status(503).json({ status: 'error' });
+  }
+}
+app.get('/health',     healthHandler);
+app.get('/api/health', healthHandler);
 
-    <main class="nk-pages">
-        <section class="section tc-light bg-white ov-h pb-0" id="about">
-            <div class="container">
-                <div class="nk-block nk-block-text-wrap">
-                    <div class="row align-items-center gutter-vr-30px">
-                        <div class="col-lg-5 order-last">
-                            <div class="nk-block-img-s1 mb-5 mb-lg-0 animated" data-animate="fadeInUp" data-delay=".8">
-                                <img src="assets/images/lavender/gfx-x-light.png" alt="app">
-                            </div>
-                        </div>
-                        <div class="col-lg-7">
-                            <div class="nk-block-text nk-block-shape-s1 bg-theme-alt animated" data-animate="fadeIn" data-delay=".1">
-                                <div class="nk-block-shade"></div>
-                                <h6>ABOUT FLASH TOKEN</h6>
-                                <h3 class="title">FLASH <span class="title-thin">is a next-generation digital asset designed for speed, accessibility, and real-world utility.</span></h3>
-                                <p>Flash Token powers a fast-growing blockchain ecosystem focused on seamless digital transactions and global accessibility. Built on secure smart contract infrastructure, FLASH enables users to participate in the future of decentralized finance.</p>
-                                <p>The Flash provides early supporters with the opportunity to acquire tokens at a fixed rate before broader market exposure. All purchases are processed transparently and delivered directly to your wallet.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+// ── Static Frontend ───────────────────────────────────────────
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: config.env === 'production' ? '1d' : 0,
+}));
 
-        <section class="section bg-white ov-h pt-0">
-            <div class="container">
-                <div class="section-head section-head-s4 wide-auto-sm text-center">
-                    <h2 class="title title-s2 title-s2-alt animated" data-animate="fadeInUp" data-delay=".1">How to Buy FLASH</h2>
-                </div>
-                <div class="nk-block nk-block-text-wrap">
-                    <div class="nk-block-text">
-                        <div class="row justify-content-center align-items-center">
-                            <div class="col-xl-7 col-lg-8">
-                                <div class="feature-slider-dots custom-dots-1 animated" data-animate="fadeInUp" data-delay=".2">
-                                    <button class="feature-slider-dot feature-slider-dot-s1 owl-dots"><em class="ikon ikon-paricle"></em></button>
-                                    <button class="feature-slider-dot feature-slider-dot-s1 owl-dots"><em class="ikon ikon-connect"></em></button>
-                                    <button class="feature-slider-dot feature-slider-dot-s1 owl-dots"><em class="ikon ikon-target"></em></button>
-                                    <button class="feature-slider-dot feature-slider-dot-s1 owl-dots"><em class="ikon ikon-shiled"></em></button>
-                                    <button class="feature-slider-dot feature-slider-dot-s1 owl-dots"><em class="ikon ikon-id-card"></em></button>
-                                </div>
-                            </div>
-                            <div class="col-xl-5 col-lg-8 text-center text-xl-start animated" data-animate="fadeInUp" data-delay=".3">
-                                <div class="feature-slider-pane has-carousel" data-items="1" data-dots="true" data-auto="true" data-custom-dots="custom-dots-1" data-animate-out="fadeOut">
-                                    <div class="ft-slider-pane-item pane-item-1">
-                                        <h5>Enter Purchase Amount</h5>
-                                        <p>Choose how many FLASH tokens you want to purchase using the secure sale form.</p>
-                                        <p>The total payment amount is calculated instantly for full transparency.</p>
-                                    </div>
-                                    <div class="ft-slider-pane-item pane-item-2">
-                                        <h5>Send Payment</h5>
-                                        <p>Complete your payment using one of the supported blockchain networks.</p>
-                                        <p>Send the exact amount shown — the unique decimal is your order fingerprint.</p>
-                                    </div>
-                                    <div class="ft-slider-pane-item pane-item-3">
-                                        <h5>Receive FLASH</h5>
-                                        <p>After payment confirmation, your FLASH tokens are automatically delivered to your wallet.</p>
-                                        <p>No manual claiming required — fast, simple, and secure.</p>
-                                    </div>
-                                    <div class="ft-slider-pane-item pane-item-4">
-                                        <h5>Secure Smart Contract</h5>
-                                        <p>FLASH is powered by secure smart contract infrastructure ensuring transparent token distribution.</p>
-                                        <p>All transactions are verifiable on-chain.</p>
-                                    </div>
-                                    <div class="ft-slider-pane-item pane-item-5">
-                                        <h5>Multi-Network Support</h5>
-                                        <p>Participate in the FLASH sale using multiple supported blockchain networks.</p>
-                                        <p>Flexible payment options make joining simple worldwide.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) return res.status(404).json({ error: 'Not found' });
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-        <section class="section bg-theme-alt ov-h pb-0 tc-light">
-            <div class="background-shade">
-                <div class="container">
-                    <div class="background-shade-left"></div>
-                    <div class="background-shade-right"></div>
-                </div>
-            </div>
-            <div class="container">
-                <div class="section-head section-head-s4 wide-auto-sm text-center">
-                    <h2 class="title title-s2 title-s2-alt animated" data-animate="fadeInUp" data-delay=".1">ICO Wallet Feature</h2>
-                </div>
-                <div class="nk-block">
-                    <div class="row justify-content-center">
-                        <div class="col-lg-4 col-md-6 col-sm-9 pt-lg-5 mt-xl-4">
-                            <div class="gutter-vr-30px">
-                                <div class="feature feature-inline feature-md-reverse animated" data-animate="fadeInUp" data-delay=".2">
-                                    <div class="feature-icon feature-icon-s7"><em class="icon ti ti-wallet"></em></div>
-                                    <div class="feature-text"><h5 class="title title-sm">Manage your Wallet</h5><p>Securely store and manage your FLASH tokens with full on-chain transparency.</p></div>
-                                </div>
-                                <div class="feature feature-inline feature-md-reverse animated" data-animate="fadeInUp" data-delay=".3">
-                                    <div class="feature-icon feature-icon-s7"><em class="icon ti ti-gift"></em></div>
-                                    <div class="feature-text"><h5 class="title title-sm">Reward &amp; Bonus</h5><p>Early supporters receive exclusive access to FLASH at the lowest presale price.</p></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-lg-4 col-md-6 col-sm-9 pt-lg-5 mt-xl-4 order-lg-last">
-                            <div class="gutter-vr-30px">
-                                <div class="feature feature-inline animated" data-animate="fadeInUp" data-delay=".4">
-                                    <div class="feature-icon feature-icon-s7"><em class="icon ti ti-world"></em></div>
-                                    <div class="feature-text"><h5 class="title title-sm">Global Trading</h5><p>FLASH is designed for global reach across multiple supported blockchain networks.</p></div>
-                                </div>
-                                <div class="feature feature-inline animated" data-animate="fadeInUp" data-delay=".5">
-                                    <div class="feature-icon feature-icon-s7"><em class="icon ti ti-id-badge"></em></div>
-                                    <div class="feature-text"><h5 class="title title-sm">Stay with Community</h5><p>Join thousands of early supporters building the Flash ecosystem together.</p></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-lg-4 col-sm-9 mt-4 mt-xl-0 order-2 align-self-end">
-                            <div class="nk-block-image text-center px-xl-4 px-lg-0 px-5 animated" data-animate="fadeInUp" data-delay=".6">
-                                <img src="assets/images/app-screens/sc-large-n-dark.png" alt="">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+// ── Global Error Handler ──────────────────────────────────────
+app.use((err, req, res, _next) => {
+  logger.error('Unhandled Express error', { error: err.message, path: req.path });
+  res.status(500).json({ error: 'An unexpected error occurred' });
+});
 
-        <section class="section pb-0 bg-white ov-h" id="faqs">
-            <div class="container">
-                <div class="section-head section-head-s4 wide-auto-sm text-center">
-                    <h2 class="title title-s2 title-s2-alt animated" data-animate="fadeInUp" data-delay=".1">Frequently Asked Questions</h2>
-                </div>
-                <div class="nk-block">
-                    <div class="row justify-content-center">
-                        <div class="col-lg-10 col-xl-8">
-                            <div class="accordion accordion-s1 accordion-faq animated" data-animate="fadeInUp" data-delay=".2" id="faq-67">
-                                <div class="accordion-item accordion-item-s4 bg-light-alt">
-                                    <h5 class="accordion-title accordion-title-sm" data-bs-toggle="collapse" data-bs-target="#faq-67-1">What is Flash Token? <span class="accordion-icon accordion-icon-s2"></span></h5>
-                                    <div id="faq-67-1" class="collapse show" data-bs-parent="#faq-67">
-                                        <div class="accordion-content"><p>Flash Token (FLASH) is a BEP-20 token on the Binance Smart Chain. You can purchase it directly using BNB, USDT, ETH, or TRX through our secure token sale platform.</p></div>
-                                    </div>
-                                </div>
-                                <div class="accordion-item accordion-item-s4 bg-light-alt">
-                                    <h5 class="accordion-title collapsed" data-bs-toggle="collapse" data-bs-target="#faq-67-2">What cryptocurrencies can I use to purchase? <span class="accordion-icon accordion-icon-s2"></span></h5>
-                                    <div id="faq-67-2" class="collapse" data-bs-parent="#faq-67">
-                                        <div class="accordion-content"><p>We accept BNB (BEP-20), USDT (BEP-20), ETH (ERC-20), USDT (ERC-20), TRX (TRC-20), and USDT (TRC-20). All payment options are shown in the buy form above.</p></div>
-                                    </div>
-                                </div>
-                                <div class="accordion-item accordion-item-s4 bg-light-alt">
-                                    <h5 class="accordion-title collapsed" data-bs-toggle="collapse" data-bs-target="#faq-67-3">Why do I need to send an exact decimal amount? <span class="accordion-icon accordion-icon-s2"></span></h5>
-                                    <div id="faq-67-3" class="collapse" data-bs-parent="#faq-67">
-                                        <div class="accordion-content"><p>The unique decimal shown in your payment instructions is your order's fingerprint. Our system uses it to automatically match your payment to your order without requiring any login or registration. Sending the wrong amount will prevent automatic matching.</p></div>
-                                    </div>
-                                </div>
-                                <div class="accordion-item accordion-item-s4 bg-light-alt">
-                                    <h5 class="accordion-title collapsed" data-bs-toggle="collapse" data-bs-target="#faq-67-4">How long does delivery take? <span class="accordion-icon accordion-icon-s2"></span></h5>
-                                    <div id="faq-67-4" class="collapse" data-bs-parent="#faq-67">
-                                        <div class="accordion-content"><p>FLASH tokens are sent automatically once your payment is detected on the blockchain. This typically takes 1–3 minutes after your transaction is broadcast.</p></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-    </main>
+// ── Startup Sequence ──────────────────────────────────────────
+async function start() {
+  logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  logger.info('  Flash Exchange Backend v2.0');
+  logger.info(`  Environment: ${config.env}`);
+  logger.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    <footer class="nk-footer bg-theme-alt">
-        <div>
-            <div class="container">
-                <div class="row justify-content-center"></div>
-            </div>
-            <div class="ovm-top ovm-h-50 bg-white"></div>
-        </div>
-        <hr class="hr-white-10 my-0">
-        <div class="section py-5 tc-light">
-            <div class="container">
-                <div class="row justify-content-center align-items-center">
-                    <div class="col-md-7">
-                        <div class="copyright-text copyright-text-s3 op-70">
-                            <p><span>Copyright &copy; 2026, Flash Exchange.</span></p>
-                        </div>
-                    </div>
-                    <div class="col-md-5 text-md-end"></div>
-                </div>
-            </div>
-        </div>
-    </footer>
-</div>
+  // 1. Database migration (blocking)
+  await migrate();
 
-<!-- Preloader -->
-<div class="preloader"><span class="spinner spinner-round"></span></div>
+  // 2. Ensure bootstrap admin
+  await ensureBootstrapAdmin();
 
-<script src="assets/js/jquery.bundle.js?ver=210"></script>
-<script src="assets/js/scripts.js?ver=210"></script>
-<script src="assets/js/theme.js?ver=200"></script>
-</body>
-</html>
+  // 3. Start Telegram bot
+  const bot = createBot();
+  if (bot) {
+    notify.setBot(bot);
+    bot.launch({ dropPendingUpdates: true });
+    logger.info('Telegram bot started');
+    // Graceful stop
+    process.once('SIGINT',  () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  }
+
+  // 4. Price updater (must be first — order creation depends on prices)
+  await priceUpdater.start();
+
+  // 5. Matching engine
+  matchingEngine.start();
+
+  // 6. Expiry engine (expires unpaid orders + cleans up old records)
+  expiryEngine.start();
+
+  // 7. Blockchain scanner (calls matching engine after each cycle)
+  await scanner.start();
+
+  // 7. Initial balance check
+  if (config.distributionWalletPrivateKey) {
+    checkBalances().catch(err => logger.warn('Initial balance check failed', { error: err.message }));
+  }
+
+  // 8. HTTP server
+  const server = app.listen(config.port, '0.0.0.0', () => {
+    logger.info(`HTTP server listening on port ${config.port}`);
+    logger.info(`Frontend:   http://localhost:${config.port}`);
+    logger.info(`Health:     http://localhost:${config.port}/health`);
+  });
+
+  // ── Graceful Shutdown ─────────────────────────────────────
+  async function shutdown(signal) {
+    logger.info(`${signal} received — shutting down gracefully`);
+    server.close(async () => {
+      await pool.end();
+      logger.info('Shutdown complete');
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 15_000);
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+  process.on('unhandledRejection', reason => logger.error('Unhandled rejection', { reason: String(reason) }));
+}
+
+start().catch(err => {
+  logger.error('Fatal startup error', { error: err.message, stack: err.stack });
+  process.exit(1);
+});
