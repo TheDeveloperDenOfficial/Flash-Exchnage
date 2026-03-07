@@ -83,38 +83,46 @@ async function getEvmBal(address, network) {
 
 // ── Tron wallet balances ──────────────────────────────────────
 async function getTronBal(address) {
-  const TRON_TIMEOUT = 12000; // longer timeout — two sequential API calls
+  const TRON_TIMEOUT = 12000;
   const headers = config.trongridApiKey ? { 'TRON-PRO-API-KEY': config.trongridApiKey } : {};
 
   try {
-    // Fetch account (TRX balance) and TRC20 tokens separately with individual timeouts
-    const [accRes, trc20Res] = await Promise.all([
-      axios.get(`https://api.trongrid.io/v1/accounts/${address}`, {
-        headers, timeout: TRON_TIMEOUT,
-      }),
-      axios.get(`https://api.trongrid.io/v1/accounts/${address}/trc20`, {
-        headers, timeout: TRON_TIMEOUT,
-      }),
-    ]);
+    // Step 1: Fetch account info (TRX balance)
+    const accRes = await axios.get(`https://api.trongrid.io/v1/accounts/${address}`, {
+      headers, timeout: TRON_TIMEOUT,
+    });
 
-    const trx = (accRes.data?.data?.[0]?.balance || 0) / 1_000_000;
+    // Unactivated wallet returns empty data array — treat as 0 balance, not error
+    const accountData = accRes.data?.data?.[0];
+    const trx = accountData ? (accountData.balance || 0) / 1_000_000 : 0;
 
-    // TronGrid /trc20 returns an array of objects: { contractAddress: balance }
-    const trc20List  = trc20Res.data?.data || [];
-    const usdtTarget = config.usdtTrc20Contract; // e.g. TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t
+    // Step 2: Fetch TRC20 balances — only if wallet is activated
     let usdt = 0;
-
-    for (const entry of trc20List) {
-      // Each entry is { [contractAddress]: "rawBalance" }
-      const contractAddr = Object.keys(entry)[0];
-      if (contractAddr && contractAddr.toLowerCase() === usdtTarget.toLowerCase()) {
-        usdt = parseFloat(Object.values(entry)[0]) / Math.pow(10, config.usdtDecimals.tron);
-        break;
+    if (accountData) {
+      try {
+        const trc20Res = await axios.get(`https://api.trongrid.io/v1/accounts/${address}/trc20`, {
+          headers, timeout: TRON_TIMEOUT,
+        });
+        const trc20List  = trc20Res.data?.data || [];
+        const usdtTarget = config.usdtTrc20Contract;
+        for (const entry of trc20List) {
+          const contractAddr = Object.keys(entry)[0];
+          if (contractAddr && contractAddr.toLowerCase() === usdtTarget.toLowerCase()) {
+            usdt = parseFloat(Object.values(entry)[0]) / Math.pow(10, config.usdtDecimals.tron);
+            break;
+          }
+        }
+      } catch (trc20Err) {
+        // TRC20 fetch failed — log but still return TRX balance
+        console.warn(`[home] TRON TRC20 fetch failed for ${address}: ${trc20Err.message}`);
       }
     }
 
     return { usdt, native: trx, nativeSym: 'TRX', error: false };
-  } catch {
+
+  } catch (err) {
+    // Log actual error so we can debug
+    console.error(`[home] TRON balance fetch failed for ${address}: ${err.message}`);
     return { usdt: null, native: null, nativeSym: 'TRX', error: true };
   }
 }
