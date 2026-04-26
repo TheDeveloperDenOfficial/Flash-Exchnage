@@ -46,6 +46,43 @@ async function validateBep20Wallet(address) {
 }
 
 /**
+ * Validate an ERC-20 (Ethereum) receiving wallet address.
+ * Same format rules as BEP-20 — both are EVM 0x addresses.
+ */
+async function validateErc20Wallet(address) {
+  if (!address || typeof address !== 'string') {
+    return { valid: false, reason: 'Wallet address is required.' };
+  }
+  const trimmed = address.trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(trimmed)) {
+    return { valid: false, reason: 'Invalid Ethereum wallet address. Must be a 42-character hex string starting with 0x.' };
+  }
+  if (trimmed.toLowerCase() === ZERO_ADDRESS) {
+    return { valid: false, reason: 'Zero address is not a valid receiving wallet.' };
+  }
+  try {
+    ethers.utils.getAddress(trimmed);
+  } catch {
+    return { valid: false, reason: 'Invalid Ethereum wallet address checksum.' };
+  }
+  return { valid: true };
+}
+
+/**
+ * Validate a TRC-20 (TRON) receiving wallet address.
+ * Base58Check format — starts with T, 34 characters.
+ */
+function validateTrc20Wallet(address) {
+  if (!address || typeof address !== 'string') {
+    return { valid: false, reason: 'Wallet address is required.' };
+  }
+  if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address.trim())) {
+    return { valid: false, reason: 'Invalid TRON wallet address. Must start with T and be 34 characters.' };
+  }
+  return { valid: true };
+}
+
+/**
  * Validate a Tron address (Base58Check format).
  * Used only for validating the FROM address in Tron transactions — not receiving wallet.
  */
@@ -53,4 +90,4 @@ function isValidTronAddress(address) {
   return typeof address === 'string' && /^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address);
 }
 
-module.exports = { validateBep20Wallet, isValidTronAddress };
+module.exports = { validateBep20Wallet, validateErc20Wallet, validateTrc20Wallet, isValidTronAddress };
