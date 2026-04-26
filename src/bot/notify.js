@@ -4,7 +4,6 @@ const logger = require('../utils/logger').child({ service: 'notify' });
 
 // ── Helpers ───────────────────────────────────────────────────
 
-const n2 = (v) => parseFloat(v).toFixed(2);
 const short = (addr) => addr ? `${addr.slice(0, 10)}…${addr.slice(-6)}` : '—';
 
 // ── Order lifecycle → Container 3 ────────────────────────────
@@ -22,7 +21,6 @@ function paymentDetected(order) {
   }).catch(e => logger.warn('notify.paymentDetected pushOrderEvent', e.message));
 
   // Push to Container 2 (alerts) with inline Release button
-  const short = (addr) => addr ? `${addr.slice(0, 10)}…${addr.slice(-6)}` : '—';
   const text = [
     `💰 <b>Payment Received — Release Required</b>`,
     ``,
@@ -38,7 +36,7 @@ function paymentDetected(order) {
     .catch(e => logger.warn('notify.paymentDetected pushAlert', e.message));
 }
 
-function orderReleased(order, releasedByName) {
+function orderReleased(order) {
   pushOrderEvent({
     id:           order.id,
     status:       'completed',
@@ -48,31 +46,6 @@ function orderReleased(order, releasedByName) {
     tx_hash_in:   order.tx_hash_in,
     updated_at:   new Date(),
   }).catch(e => logger.warn('notify.orderReleased', e.message));
-}
-
-
-  pushOrderEvent({
-    id:            order.id,
-    status:        'completed',
-    token_amount:  order.token_amount,
-    coin_symbol:   order.coin_symbol,
-    network:       order.network,
-    tx_hash_in:    order.tx_hash_in,
-    tx_hash_out:   txHashOut,
-    updated_at:    new Date(),
-  }).catch(e => logger.warn('notify.orderCompleted', e.message));
-}
-
-function orderSending(order) {
-  pushOrderEvent({
-    id:           order.id,
-    status:       'sending',
-    token_amount: order.token_amount,
-    coin_symbol:  order.coin_symbol,
-    network:      order.network,
-    tx_hash_in:   order.tx_hash_in,
-    updated_at:   new Date(),
-  }).catch(e => logger.warn('notify.orderSending', e.message));
 }
 
 // ── Alerts → Container 2 ──────────────────────────────────────
@@ -106,15 +79,9 @@ function lowBalance(symbol, balance, threshold) {
   pushAlert(text).catch(e => logger.warn('notify.lowBalance', e.message));
 }
 
-// ── Removed (no longer notify) ────────────────────────────────
-// newOrder   — noise, not actionable
-// orderExpired — noise, unpaid orders expire silently
-
 module.exports = {
   paymentDetected,
   orderReleased,
-  orderCompleted,
-  orderSending,
   orderFailed,
   unmatchedTransaction,
   lowBalance,
