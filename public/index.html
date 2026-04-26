@@ -118,12 +118,24 @@
                                                 </div>
                                             </div>
 
+                                            <div class="field-item pb-3">
+                                                <label class="field-label" for="token_chain">Receive FLASH On</label>
+                                                <div class="field-wrap">
+                                                    <select id="token_chain" name="token_chain" class="input-bordered">
+                                                        <option value="bsc">BSC (BEP-20)</option>
+                                                        <option value="eth">Ethereum (ERC-20)</option>
+                                                        <option value="tron">TRON (TRC-20)</option>
+                                                    </select>
+                                                </div>
+                                                <p style="font-size:11px;color:#888;margin-top:4px;">Select the network you want to receive FLASH tokens on</p>
+                                            </div>
+
                                             <div class="field-item pb-4">
-                                                <label class="field-label" for="receiving_wallet">Your BEP-20 Wallet Address</label>
+                                                <label class="field-label" id="wallet-label" for="receiving_wallet">Your BEP-20 Wallet Address</label>
                                                 <div class="field-wrap">
                                                     <input type="text" id="receiving_wallet" name="receiving_wallet" class="input-bordered" placeholder="0x... BEP-20 wallet address" required>
                                                 </div>
-                                                <p style="font-size:11px;color:#888;margin-top:4px;">FLASH tokens will be sent to this address (BSC network)</p>
+                                                <p id="wallet-hint" style="font-size:11px;color:#888;margin-top:4px;">FLASH tokens will be sent to this address (BSC network)</p>
                                             </div>
 
                                             <div id="fe-form-error" style="display:none;background:#f8d7da;color:#721c24;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:12px;"></div>
