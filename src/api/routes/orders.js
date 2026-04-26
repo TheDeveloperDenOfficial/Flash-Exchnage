@@ -3,7 +3,7 @@ const express = require('express');
 const { pool, getSetting } = require('../../db');
 const { getPrice, arePricesFresh } = require('../../services/price-updater');
 const { generateVerifiedUniqueAmount } = require('../../utils/uniqueAmount');
-const { validateBep20Wallet, isValidTronAddress } = require('../../utils/validators');
+const { validateBep20Wallet, validateErc20Wallet, validateTrc20Wallet, isValidTronAddress } = require('../../utils/validators');
 const { generateQRDataUrl } = require('../../utils/qr');
 const logger = require('../../utils/logger').child({ service: 'orders-api' });
 
@@ -12,7 +12,7 @@ const router = express.Router();
 // ── POST /api/order ───────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
-    const { quantity, payment_method_code, receiving_wallet } = req.body;
+    const { quantity, payment_method_code, receiving_wallet, token_chain } = req.body;
 
     // ── Validation ──────────────────────────────────────
     const errors = [];
@@ -38,23 +38,19 @@ router.post('/', async (req, res) => {
     }
     if (errors.length) return res.status(400).json({ error: errors.join('. ') });
 
-    // ── Validate wallet ─────────────────────────────────
-    // Determine network from payment method before wallet validation
-    const { rows: pmCheckRows } = await pool.query(
-      `SELECT network FROM payment_methods WHERE code = $1 AND is_active = true`,
-      [payment_method_code]
-    );
-    const pmNetwork = pmCheckRows[0]?.network || '';
+    // ── Validate receiving wallet against token_chain (independent of payment method) ─
+    const receivingChain = ['bsc', 'eth', 'tron'].includes(token_chain) ? token_chain : 'bsc';
 
-    if (pmNetwork === 'tron') {
-      if (!isValidTronAddress(receiving_wallet.trim())) {
-        return res.status(400).json({ error: 'Invalid TRON wallet address. Must start with T and be 34 characters.' });
-      }
+    if (receivingChain === 'tron') {
+      const check = validateTrc20Wallet(receiving_wallet.trim());
+      if (!check.valid) return res.status(400).json({ error: check.reason });
+    } else if (receivingChain === 'eth') {
+      const check = await validateErc20Wallet(receiving_wallet.trim());
+      if (!check.valid) return res.status(400).json({ error: check.reason });
     } else {
-      const walletCheck = await validateBep20Wallet(receiving_wallet);
-      if (!walletCheck.valid) {
-        return res.status(400).json({ error: walletCheck.reason });
-      }
+      // bsc (default)
+      const check = await validateBep20Wallet(receiving_wallet.trim());
+      if (!check.valid) return res.status(400).json({ error: check.reason });
     }
 
     // ── Payment method + wallet ─────────────────────────
