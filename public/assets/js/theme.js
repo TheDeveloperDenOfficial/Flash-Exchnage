@@ -19,12 +19,20 @@
   // Maps network key → native coin symbol (used to decide when to show badge)
   var NETWORK_NATIVE = { bsc: 'bnb', eth: 'eth', tron: 'trx' };
 
+  // Chain config for receiving wallet
+  var CHAIN_CONFIG = {
+    bsc:  { label: 'Your BEP-20 Wallet Address', placeholder: '0x... BEP-20 wallet address', hint: 'FLASH tokens will be sent to this address (BSC network)',      regex: /^0x[0-9a-fA-F]{40}$/, errMsg: 'Invalid BSC address. Must be 42 characters starting with 0x.' },
+    eth:  { label: 'Your ERC-20 Wallet Address', placeholder: '0x... ERC-20 wallet address', hint: 'FLASH tokens will be sent to this address (Ethereum network)',  regex: /^0x[0-9a-fA-F]{40}$/, errMsg: 'Invalid Ethereum address. Must be 42 characters starting with 0x.' },
+    tron: { label: 'Your TRC-20 Wallet Address', placeholder: 'T... TRC-20 wallet address',  hint: 'FLASH tokens will be sent to this address (TRON network)',      regex: /^T[1-9A-HJ-NP-Za-km-z]{33}$/, errMsg: 'Invalid TRON address. Must start with T and be 34 characters.' },
+  };
+
   // ── Bootstrap ──────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
     loadConfig();
     injectModal();
     bindForm();
     bindBanner();
+    bindChainDropdown();
   });
 
   // ── Config ─────────────────────────────────────────────────
@@ -390,6 +398,30 @@
     trigger.addEventListener('mouseleave', function () { if (!isOpen) trigger.style.borderColor = '#d9d9d9'; });
   }
 
+  // ── Chain Dropdown ─────────────────────────────────────────
+  function bindChainDropdown() {
+    var chainSelect = document.getElementById('token_chain');
+    if (!chainSelect) return;
+    chainSelect.addEventListener('change', updateWalletField);
+    updateWalletField(); // apply on load
+  }
+
+  function updateWalletField() {
+    var chainSelect  = document.getElementById('token_chain');
+    var walletInput  = document.getElementById('receiving_wallet');
+    var walletLabel  = document.getElementById('wallet-label');
+    var walletHint   = document.getElementById('wallet-hint');
+    if (!chainSelect || !walletInput) return;
+
+    var chain  = chainSelect.value || 'bsc';
+    var cfg    = CHAIN_CONFIG[chain] || CHAIN_CONFIG.bsc;
+
+    if (walletLabel) walletLabel.textContent  = cfg.label;
+    walletInput.placeholder                   = cfg.placeholder;
+    if (walletHint)  walletHint.textContent   = cfg.hint;
+    walletInput.value = ''; // clear on chain switch to avoid confusion
+  }
+
   // ── Form Binding ───────────────────────────────────────────
   function bindForm() {
     var qtyInput = document.getElementById('icox_quantity');
@@ -415,22 +447,24 @@
     var qty    = parseInt(document.getElementById('icox_quantity').value, 10);
     var method = document.getElementById('payment_method').value;
     var wallet = document.getElementById('receiving_wallet').value.trim();
+    var chain  = (document.getElementById('token_chain') || {}).value || 'bsc';
+    var cfg    = CHAIN_CONFIG[chain] || CHAIN_CONFIG.bsc;
 
     clearFormError();
 
     if (!qty || isNaN(qty) || qty < appConfig.minOrderQty)
       return showFormError('Minimum quantity is ' + appConfig.minOrderQty + ' ' + appConfig.tokenSymbol);
     if (!method) return showFormError('Please choose a payment currency.');
-    if (!wallet) return showFormError('Please enter your BEP-20 wallet address.');
-    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet))
-      return showFormError('Invalid wallet address. Must be a 42-character hex address starting with 0x.');
+    if (!wallet) return showFormError('Please enter your ' + cfg.label + '.');
+    if (!cfg.regex.test(wallet))
+      return showFormError(cfg.errMsg);
 
     setBuyLoading(true);
     try {
       var res  = await fetch(API + '/order', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ quantity: qty, payment_method_code: method, receiving_wallet: wallet }),
+        body:    JSON.stringify({ quantity: qty, payment_method_code: method, receiving_wallet: wallet, token_chain: chain }),
       });
       var data = await res.json();
       if (!res.ok) return showFormError(data.error || 'Order creation failed');
