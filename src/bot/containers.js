@@ -252,6 +252,7 @@ function formatOrderEntry(order) {
   const statusMap = {
     waiting_payment: '⏳ Awaiting Payment',
     matched:         '🔍 Matched',
+    pending_release: '🔔 Pending Release',
     sending:         '📤 Sending Tokens',
     completed:       '✅ Completed',
     failed:          '❌ Failed',
@@ -264,6 +265,23 @@ function formatOrderEntry(order) {
   if (order.tx_hash_out) lines.push(`   TX: <code>${order.tx_hash_out.slice(0, 18)}…</code>`);
   else if (order.tx_hash_in) lines.push(`   TX in: <code>${order.tx_hash_in.slice(0, 18)}…</code>`);
   return lines.join('\n');
+}
+
+// ── Update Container 2 (Alerts) with inline button ───────────
+
+async function pushAlertWithButton(entry, callbackData, buttonLabel) {
+  if (!_bot) return;
+  const admins = await getAdmins();
+  const keyboard = { inline_keyboard: [[{ text: buttonLabel, callback_data: callbackData }]] };
+
+  for (const adminId of admins) {
+    try {
+      // Always send as a new message so the button is fresh and tappable
+      await safeSend(adminId, entry, keyboard);
+    } catch (err) {
+      logger.warn(`[containers] pushAlertWithButton failed for ${adminId}: ${err.message}`);
+    }
+  }
 }
 
 // ── Update Container 2 (Alerts) ──────────────────────────────
@@ -405,6 +423,7 @@ module.exports = {
   initContainers,
   clearAdminChat,
   pushAlert,
+  pushAlertWithButton,
   pushOrderEvent,
   refreshAlerts,
   refreshOrders,

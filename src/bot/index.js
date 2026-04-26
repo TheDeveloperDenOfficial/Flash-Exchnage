@@ -7,7 +7,7 @@ const containers  = require('./containers');
 // Handlers
 const { handleHome }     = require('./handlers/home');
 const { handleStats }    = require('./handlers/stats');
-const { handleOrders, handleOrderDetail, handleOrderRetry } = require('./handlers/orders');
+const { handleOrders, handleOrderDetail, handleOrderRelease, handleOrderRetry } = require('./handlers/orders');
 const { handleWallets, handleWalletToggle, handleWalletQR, handleWalletDelete, handleWalletConfirmDelete } = require('./handlers/wallets');
 const { handleSettings } = require('./handlers/settings');
 const { handleAdmins, handleAdminRemove } = require('./handlers/admins');
@@ -62,6 +62,7 @@ function createBot() {
   // ── Orders ──────────────────────────────────────────────────
   bot.action(/^orders_page_(\d+)$/,  ctx => { ctx.answerCbQuery(); return handleOrders(ctx, parseInt(ctx.match[1], 10)); });
   bot.action(/^order_detail_(.+)$/,  ctx => { ctx.answerCbQuery(); return handleOrderDetail(ctx, ctx.match[1]); });
+  bot.action(/^order_release_(.+)$/, ctx => handleOrderRelease(ctx, ctx.match[1]));
   bot.action(/^order_retry_(.+)$/,   ctx => handleOrderRetry(ctx, ctx.match[1]));
 
   // ── Wallets ─────────────────────────────────────────────────

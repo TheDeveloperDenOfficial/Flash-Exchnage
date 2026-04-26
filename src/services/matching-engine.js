@@ -1,6 +1,5 @@
 'use strict';
 const { pool } = require('../db');
-const { sendTokensWithRetry } = require('./token-sender');
 const logger = require('../utils/logger').child({ service: 'matching-engine' });
 
 // In-memory guard — prevents duplicate sends on same order
@@ -71,26 +70,25 @@ async function matchTransaction(txn) {
         [txn.tx_hash, txn.block_number, order.id]
       );
 
-      logger.info('Order matched — sending tokens', {
+      // Mark order as pending manual release (admin will send tokens manually)
+      await pool.query(
+        `UPDATE orders SET status='pending_release', updated_at=NOW() WHERE id=$1`,
+        [order.id]
+      );
+
+      logger.info('Order matched — awaiting manual release', {
         orderId: order.id, txHash: txn.tx_hash, tokens: order.token_amount, late: isLate,
       });
 
-      // Trigger token send (non-blocking)
-      sendTokensWithRetry({ ...order, status: 'matched' })
-        .then(result => {
-          // Notify via bot after result
-          const notify = require('../bot/notify');
-          if (result.success) {
-            notify.orderCompleted({ ...order, tx_hash_in: txn.tx_hash }, result.txHash);
-          } else {
-            notify.orderFailed(order, result.error);
-          }
-        })
-        .catch(err => logger.error('sendTokensWithRetry threw', { orderId: order.id, error: err.message }));
-
-      // Notify payment detected
+      // Notify admin: payment received, manual action required
       const notify = require('../bot/notify');
-      notify.paymentDetected({ ...order, tx_hash_in: txn.tx_hash, network: txn.network, coin_symbol: txn.coin_symbol });
+      notify.paymentDetected({
+        ...order,
+        status:      'pending_release',
+        tx_hash_in:  txn.tx_hash,
+        network:     txn.network,
+        coin_symbol: txn.coin_symbol,
+      });
 
       return { matched: true };
     } finally {

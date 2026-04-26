@@ -1,7 +1,7 @@
 'use strict';
 const { Markup } = require('telegraf');
 const { pool } = require('../../db');
-const { sendTokensWithRetry } = require('../../services/token-sender');
+const notify = require('../notify');
 const { withHomeButton } = require('../middleware/menu');
 const { smartEdit, smartReply } = require('../middleware/smartEdit');
 
@@ -10,6 +10,7 @@ const PAGE_SIZE = 8;
 const STATUS_EMOJI = {
   completed: '✅', waiting_payment: '⏳', failed: '❌',
   expired: '⏰', matched: '🔍', sending: '📤', manually_completed: '🛠',
+  pending_release: '🔔',
 };
 
 function fmtOrder(o, index) {
@@ -103,6 +104,9 @@ async function handleOrderDetail(ctx, orderId) {
   ].filter(Boolean).join('\n');
 
   const actionRows = [];
+  if (o.status === 'pending_release') {
+    actionRows.push([Markup.button.callback('✅  Mark as Released', `order_release_${o.id}`)]);
+  }
   if (o.status === 'failed') {
     actionRows.push([Markup.button.callback('🔁  Retry Send', `order_retry_${o.id}`)]);
   }
@@ -115,24 +119,38 @@ async function handleOrderDetail(ctx, orderId) {
   });
 }
 
-async function handleOrderRetry(ctx, orderId) {
-  const { rows } = await pool.query(`SELECT * FROM orders WHERE id=$1 AND status='failed'`, [orderId]);
-  if (!rows.length) return ctx.answerCbQuery('Order is not in failed state');
+async function handleOrderRelease(ctx, orderId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM orders WHERE id=$1 AND status='pending_release'`, [orderId]
+  );
+  if (!rows.length) return ctx.answerCbQuery('Order is not pending release');
 
-  await ctx.answerCbQuery('Retrying…');
-  // Retrying is a background action — edit the current message to show progress
-  await smartEdit(ctx, `🔁 <b>Retrying token send…</b>\n\nOrder: <code>${orderId}</code>\nPlease wait…`, {
+  const adminId = ctx.from.id;
+
+  // Mark as completed — admin confirmed manual transfer done
+  await pool.query(
+    `UPDATE orders
+     SET status='completed', manually_completed_by=$1, completed_at=NOW(), updated_at=NOW()
+     WHERE id=$2`,
+    [adminId, orderId]
+  );
+
+  await ctx.answerCbQuery('✅ Order marked as released');
+
+  await smartEdit(ctx, `✅ <b>Order Released</b>\n\nOrder: <code>${orderId}</code>\nMarked as completed by you.`, {
     parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([[Markup.button.callback('🏠  Main Menu', 'nav_home')]]),
+    ...Markup.inlineKeyboard([
+      [Markup.button.callback('📋  Back to Orders', 'nav_orders')],
+      [Markup.button.callback('🏠  Main Menu', 'nav_home')],
+    ]),
   });
 
-  sendTokensWithRetry(rows[0]).then(async result => {
-    if (result.success) {
-      await smartReply(ctx, `✅ <b>Retry successful!</b>\nTX: <code>${result.txHash}</code>`, { parse_mode: 'HTML' });
-    } else {
-      await smartReply(ctx, `❌ <b>Retry failed:</b> ${result.error}`, { parse_mode: 'HTML' });
-    }
-  }).catch(err => smartReply(ctx, `❌ Error: ${err.message}`, { parse_mode: 'HTML' }));
+  // Notify other admins via container 3
+  notify.orderReleased(rows[0]);
+}
+
+async function handleOrderRetry(ctx, orderId) {
+  return ctx.answerCbQuery('Manual release is now required. Use the order detail view.');
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -151,4 +169,4 @@ function msToCountdown(ms) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-module.exports = { handleOrders, handleOrderDetail, handleOrderRetry };
+module.exports = { handleOrders, handleOrderDetail, handleOrderRelease, handleOrderRetry };

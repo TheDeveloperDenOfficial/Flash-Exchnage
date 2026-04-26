@@ -1,5 +1,5 @@
 'use strict';
-const { pushAlert, pushOrderEvent } = require('./containers');
+const { pushAlert, pushAlertWithButton, pushOrderEvent } = require('./containers');
 const logger = require('../utils/logger').child({ service: 'notify' });
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -10,18 +10,47 @@ const short = (addr) => addr ? `${addr.slice(0, 10)}…${addr.slice(-6)}` : '—
 // ── Order lifecycle → Container 3 ────────────────────────────
 
 function paymentDetected(order) {
+  // Push to Container 3 (live orders feed)
   pushOrderEvent({
     id:           order.id,
-    status:       'matched',
+    status:       'pending_release',
     token_amount: order.token_amount,
     coin_symbol:  order.coin_symbol,
     network:      order.network,
     tx_hash_in:   order.tx_hash_in,
     updated_at:   new Date(),
-  }).catch(e => logger.warn('notify.paymentDetected', e.message));
+  }).catch(e => logger.warn('notify.paymentDetected pushOrderEvent', e.message));
+
+  // Push to Container 2 (alerts) with inline Release button
+  const short = (addr) => addr ? `${addr.slice(0, 10)}…${addr.slice(-6)}` : '—';
+  const text = [
+    `💰 <b>Payment Received — Release Required</b>`,
+    ``,
+    `   <b>${Number(order.token_amount).toLocaleString()} FLASH</b>`,
+    `   Paid: ${order.unique_crypto_amount} ${order.coin_symbol} (${(order.network || '').toUpperCase()})`,
+    `   Send to: <code>${order.receiving_wallet}</code>`,
+    `   <i>${short(order.receiving_wallet)}</i>`,
+    ``,
+    `   ⬇️  Transfer tokens manually then tap Release`,
+  ].join('\n');
+
+  pushAlertWithButton(text, `release_order_${order.id}`, '✅ Mark as Released')
+    .catch(e => logger.warn('notify.paymentDetected pushAlert', e.message));
 }
 
-function orderCompleted(order, txHashOut) {
+function orderReleased(order, releasedByName) {
+  pushOrderEvent({
+    id:           order.id,
+    status:       'completed',
+    token_amount: order.token_amount,
+    coin_symbol:  order.coin_symbol,
+    network:      order.network,
+    tx_hash_in:   order.tx_hash_in,
+    updated_at:   new Date(),
+  }).catch(e => logger.warn('notify.orderReleased', e.message));
+}
+
+
   pushOrderEvent({
     id:            order.id,
     status:        'completed',
@@ -83,6 +112,7 @@ function lowBalance(symbol, balance, threshold) {
 
 module.exports = {
   paymentDetected,
+  orderReleased,
   orderCompleted,
   orderSending,
   orderFailed,
